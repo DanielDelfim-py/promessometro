@@ -3,10 +3,10 @@ import { agruparPorData } from '@/lib/atos/agrupar';
 import { lerFiltro, ORDEM_FILTRO, ROTULO_FILTRO, ROTULO_TIPO, type AtoPublico } from '@/lib/atos/filtro';
 import { dataBrasil } from '@/lib/atos/data';
 import { criarClientePublico } from '@/lib/supabase/publico';
+import { CabecalhoPublico } from '@/components/CabecalhoPublico';
 
 export const dynamic = 'force-dynamic';
 
-const NOME = process.env.NEXT_PUBLIC_NOME_PLATAFORMA ?? 'Promessômetro';
 const hojeSP = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 const br = (iso: string) => iso.split('-').reverse().join('/');
 
@@ -44,14 +44,7 @@ export default async function Atos({
 
   return (
     <div className="pagina">
-      <header className="topo">
-        <div className="topo-interno">
-          <Link href="/" className="marca">{NOME}</Link>
-          <nav aria-label="Principal">
-            <Link href="/atos" aria-current="page" className="ativo">Atos oficiais</Link>
-          </nav>
-        </div>
-      </header>
+      <CabecalhoPublico ativo="atos" />
 
       <main className="conteudo">
         <aside className="filtros">
@@ -106,7 +99,7 @@ export default async function Atos({
               ))}
             </div>
           ))}
-          <p className="rodape-ia">Resumos preparados com apoio de IA e aprovados por um editor antes da publicação.</p>
+          <p className="rodape-ia">Resumos preparados com apoio de IA e aprovados por um editor antes da publicação. <Link href="/como-trabalhamos">Saiba como trabalhamos.</Link></p>
         </section>
       </main>
     </div>
