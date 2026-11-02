@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import { mensagemDeErro } from '@/lib/editorial/erros';
 import { htmlParaTexto } from '@/lib/ia/texto';
 import { exigirEditor } from '@/lib/supabase/servidor';
 import { gerarResumoPortaria, revisarAto } from '../../actions';
@@ -34,7 +35,7 @@ export default async function Revisao({
     <main className="revisao">
       <h1>{ato.titulo_original}</h1>
       <p>{ato.orgao} · DOU {ato.data_dou}, seção {ato.secao} · <a href={ato.url_dou} target="_blank" rel="noreferrer">Texto original no DOU</a></p>
-      {erro && <p role="alert" className="erro">{erro}</p>}
+      {mensagemDeErro(erro) && <p role="alert" className="erro">{mensagemDeErro(erro)}</p>}
       <div className="duas-colunas">
         <section>
           <h2>Texto original</h2>

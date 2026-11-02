@@ -27,7 +27,7 @@ export default async function Atos({
     else temas = r.data ?? [];
 
     if (filtro.tipos.length > 0) {
-      let q = supabase.from('ato_publico').select('*').in('tipo', filtro.tipos);
+      let q = supabase.from('ato_publico').select('id, tipo, numero, orgao, data_dou, secao, edicao_extra, titulo, resumo, url_dou, publicado_em, tema_nome, tema_slug').in('tipo', filtro.tipos);
       if (filtro.tema) q = q.eq('tema_slug', filtro.tema);
       const { data, error } = await q
         .order('data_dou', { ascending: false })
