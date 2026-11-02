@@ -58,4 +58,51 @@ const rpc = await anon.rpc('revisar_ato', {
 });
 conferir('anon nao executa revisar_ato', rpc.error?.code === '42501', detalheErro(rpc.error));
 
+// Bloco opcional: privilegio minimo de service_role (so roda com SUPABASE_SECRET_KEY).
+// Todas as operacoes abaixo DEVEM falhar com 42501 e nao deixar dados.
+const chaveSecreta = process.env.SUPABASE_SECRET_KEY;
+if (chaveSecreta) {
+  const svc = createClient(url, chaveSecreta, { auth: { persistSession: false } });
+  const ZERO = '00000000-0000-0000-0000-000000000000';
+
+  const insPub = await svc.from('ato').insert({
+    dou_id: 'verificar-rls',
+    tipo: 'decreto',
+    orgao: 'x',
+    data_dou: '2026-01-01',
+    titulo_original: 'x',
+    texto_original: 'x',
+    url_dou: 'https://x',
+    status: 'publicado',
+    titulo_publico: 'x',
+    resumo_publico: 'x',
+    tema_id: ZERO,
+    publicado_em: '2026-01-01T00:00:00Z',
+  });
+  conferir('service_role nao insere ato publicado', insPub.error?.code === '42501', detalheErro(insPub.error));
+
+  const insRev = await svc.from('revisao').insert({
+    ato_id: ZERO,
+    editor_id: ZERO,
+    decisao: 'aprovou',
+    valores_antes: {},
+    valores_depois: {},
+  });
+  conferir('service_role nao insere revisao', insRev.error?.code === '42501', detalheErro(insRev.error));
+
+  const updRev = await svc.from('revisao').update({ nota: 'x' }).eq('id', ZERO);
+  conferir('service_role nao altera revisao', updRev.error?.code === '42501', detalheErro(updRev.error));
+
+  const delRev = await svc.from('revisao').delete().eq('id', ZERO);
+  conferir('service_role nao apaga revisao', delRev.error?.code === '42501', detalheErro(delRev.error));
+
+  const delAto = await svc.from('ato').delete().eq('id', ZERO);
+  conferir('service_role nao apaga ato', delAto.error?.code === '42501', detalheErro(delAto.error));
+
+  const updOrgao = await svc.from('ato').update({ orgao: 'x' }).eq('id', ZERO);
+  conferir('service_role nao altera colunas de ato alem de status', updOrgao.error?.code === '42501', detalheErro(updOrgao.error));
+} else {
+  console.log('PULOU verificacoes de service_role (defina SUPABASE_SECRET_KEY para rodar)');
+}
+
 process.exit(falhas ? 1 : 0);
