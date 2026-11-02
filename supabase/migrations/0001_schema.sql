@@ -35,6 +35,7 @@ create table ato (
   resumo_publico text,
   publicado_em timestamptz,
   criado_em timestamptz not null default now(),
+  constraint url_dou_https check (url_dou ~ '^https://'),
   constraint publicado_completo check (
     status <> 'publicado'
     or (titulo_publico is not null and resumo_publico is not null and tema_id is not null and publicado_em is not null)
@@ -99,13 +100,17 @@ create policy revisao_editor on revisao for select to authenticated using (is_ed
 create policy execucao_editor on execucao_coleta for select to authenticated using (is_editor());
 
 -- Privilégios explícitos (não dependem dos grants padrão do Supabase).
--- service_role ignora RLS, por isso os triggers abaixo protegem publicação e revisao.
+-- service_role ignora RLS, por isso recebe o mínimo necessário e os triggers abaixo protegem publicação e revisao.
 revoke all on tema, editor, ato, rascunho_ia, revisao, execucao_coleta from anon, authenticated, service_role;
 grant select on tema to anon, authenticated;
 grant select on editor, ato, rascunho_ia, revisao, execucao_coleta to authenticated;
-grant select, insert, update, delete on tema, ato, rascunho_ia, execucao_coleta, editor to service_role;
--- revisao é somente inserção, inclusive para service_role.
-grant select, insert on revisao to service_role;
+-- service_role: coletor (insere e lê ato), rascunhos (insere rascunho_ia, muda só ato.status),
+-- compensação de salvarRascunho (apaga rascunho_ia). Sem grant em revisao nem em editor.
+grant select, insert on ato to service_role;
+grant update (status) on ato to service_role;
+grant select, insert, delete on rascunho_ia to service_role;
+grant insert on execucao_coleta to service_role;
+grant select on tema to service_role;
 grant usage on schema public to anon, authenticated, service_role;
 
 -- Publicação só pela função revisar_ato (vale também para service_role).
@@ -114,6 +119,13 @@ language plpgsql security invoker set search_path = public, pg_temp as $$
 declare
   v_publica boolean;
 begin
+  -- Atos ja publicados ou descartados so mudam pela funcao revisar_ato.
+  if TG_OP = 'UPDATE'
+     and OLD.status in ('publicado', 'descartado')
+     and current_setting('app.revisando', true) is distinct from 'on' then
+    raise exception 'ato publicado ou descartado so pode ser alterado pela funcao revisar_ato' using errcode = '42501';
+  end if;
+
   if NEW.status is distinct from 'publicado' then
     return NEW;
   end if;
@@ -157,6 +169,9 @@ create trigger revisao_sem_truncate
   before truncate on revisao
   for each statement execute function bloquear_alteracao_revisao();
 
+-- Esta view e propositalmente com direitos do dono (nao usa security_invoker):
+-- assim anon nunca precisa de privilegio em ato. NAO troque para security_invoker,
+-- pois a pagina publica deixaria de funcionar. O aviso do advisor do Supabase e esperado.
 create view ato_publico as
 select
   a.id, a.tipo, a.numero, a.orgao, a.data_dou, a.secao, a.edicao_extra,
