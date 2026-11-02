@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { gerarRascunho, type ClienteIA } from '@/lib/ia/gerarRascunho';
+import { gerarRascunho, MARCADOR_TRUNCADO, type ClienteIA } from '@/lib/ia/gerarRascunho';
 
 const temas = [
   { slug: 'saude', nome: 'Saúde' },
@@ -75,6 +75,8 @@ describe('gerarRascunho', () => {
     expect(m1).toContain('<ato>');
     expect(m1).toContain('</ato>');
     expect(m1).toContain('[texto truncado: so os primeiros 12000 caracteres foram enviados]');
+    expect(m1).toContain(MARCADOR_TRUNCADO);
+    expect(c1.create.mock.calls[0][0].system).toContain(MARCADOR_TRUNCADO);
     expect(m1.indexOf('[texto truncado')).toBeLessThan(m1.indexOf('</ato>'));
 
     const c2 = clienteCom({ titulo: 't', resumo: 'r', tema: 'saude' });
@@ -94,11 +96,11 @@ describe('gerarRascunho', () => {
     const c = clienteCom({ titulo: 't', resumo: 'r', tema: 'saude' });
     await gerarRascunho(c, ato, temas, 'm');
     const sistema = c.create.mock.calls[0][0].system as string;
-    expect(sistema).toContain('350');
-    expect(sistema).toContain('200');
+    expect(sistema).toContain('no máximo 350 caracteres');
+    expect(sistema).toContain('até 200 caracteres');
     expect(sistema).not.toContain('não parece tratar de veto');
     expect(sistema).toContain('dado');
-    expect(sistema).toContain('[texto truncado...]');
+    expect(sistema).toContain(MARCADOR_TRUNCADO);
     expect(c.create.mock.calls[0][0].tools[0].input_schema.properties.observacao.description).toContain('200');
   });
 
@@ -108,6 +110,14 @@ describe('gerarRascunho', () => {
     expect(o).toHaveLength(300);
     expect(o.endsWith('…')).toBe(true);
     expect(o.slice(0, 299)).toBe('a'.repeat(299));
+  });
+
+  it('observacao cortada nao deixa espaco antes das reticencias', async () => {
+    const obs = 'a'.repeat(298) + ' ' + 'b'.repeat(50);
+    const o = (await gerarRascunho(clienteCom({ titulo: 't', resumo: 'r', tema: 'saude', observacao: obs }), ato, temas, 'm')).observacao as string;
+    expect(o.length).toBeLessThanOrEqual(300);
+    expect(o.endsWith('…')).toBe(true);
+    expect(o.endsWith(' …')).toBe(false);
   });
 
   it('observacao com ate 300 caracteres fica intacta; so espacos vira null', async () => {

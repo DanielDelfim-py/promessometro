@@ -55,11 +55,11 @@ function fake(cfg: Config) {
 
 const r = { titulo: 'T', resumo: 'R', tema: 'saude', observacao: 'obs' };
 
-it('VERSAO_PROMPT e v2', () => {
-  expect(VERSAO_PROMPT).toBe('v2');
-});
-
 describe('salvarRascunho', () => {
+  it('VERSAO_PROMPT e v2', () => {
+    expect(VERSAO_PROMPT).toBe('v2');
+  });
+
   it('insere o rascunho e muda o ato de coletado para rascunho', async () => {
     const { sb, ops } = fake({});
     await salvarRascunho(sb, 'a1', r, 'm');
