@@ -20,3 +20,7 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+
+# artefatos do TypeScript/Next
+*.tsbuildinfo
+next-env.d.ts
