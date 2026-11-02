@@ -20,7 +20,10 @@ export async function revisarAto(formData: FormData) {
   const nota = String(formData.get('nota') ?? '').trim() || null;
 
   const tipoAcao = decidirAcao(acao);
-  if (!tipoAcao) redirect(`/editorial/ato/${atoId}?erro=dados-invalidos`);
+  if (!tipoAcao) redirect(`/editorial/ato/${atoId}?erro=acao-invalida`);
+  if (titulo.length > 140 || resumo.length > 600 || (nota?.length ?? 0) > 500) {
+    redirect(`/editorial/ato/${atoId}?erro=texto-longo`);
+  }
   if ((tipoAcao === 'corrigiu' || tipoAcao === 'despublicou') && !nota) {
     redirect(`/editorial/ato/${atoId}?erro=nota-obrigatoria`);
   }
@@ -57,7 +60,9 @@ export async function revisarAto(formData: FormData) {
 
   revalidatePath('/editorial');
   revalidatePath('/atos');
-  redirect('/editorial');
+  redirect(
+    decisao === 'corrigiu' || decisao === 'despublicou' ? '/editorial?aba=publicados' : '/editorial',
+  );
 }
 
 export async function gerarResumoPortaria(formData: FormData) {

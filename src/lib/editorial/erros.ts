@@ -4,6 +4,8 @@ export const MENSAGENS_ERRO: Record<string, string> = {
   'dados-invalidos': 'Título, resumo e tema são obrigatórios para publicar.',
   'nota-obrigatoria': 'A nota é obrigatória para corrigir ou despublicar.',
   'ato-nao-publicado': 'Este ato não está publicado.',
+  'acao-invalida': 'Ação inválida.',
+  'texto-longo': 'Texto acima do limite de tamanho.',
   'falha-ia': 'Não foi possível gerar o resumo com a IA. Tente novamente.',
   'ato-invalido': 'Ato inválido.',
   erro: 'Não foi possível concluir a ação. Tente novamente.',

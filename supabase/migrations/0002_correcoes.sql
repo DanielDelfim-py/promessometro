@@ -28,6 +28,48 @@ join tema t on t.id = a.tema_id
 where a.status = 'publicado';
 grant select on ato_publico to anon, authenticated;
 
+-- 3b) guardar_publicacao: igual a 0001, com uma regra nova no topo.
+-- Correcao/despublicacao so nasce em revisar_ato; um INSERT (ex.: service_role) nao pode
+-- semear correcao_nota/corrigido_em, senao texto nao revisado apareceria como "Corrigido em ...".
+-- create or replace mantem o trigger ato_guardar_publicacao ligado a funcao.
+create or replace function guardar_publicacao() returns trigger
+language plpgsql security invoker set search_path = public, pg_temp as $$
+declare
+  v_publica boolean;
+begin
+  if TG_OP = 'INSERT' and (NEW.correcao_nota is not null or NEW.corrigido_em is not null) then
+    raise exception 'correcao so pode ser registrada pela funcao revisar_ato' using errcode = '42501';
+  end if;
+
+  -- Atos ja publicados ou descartados so mudam pela funcao revisar_ato.
+  if TG_OP = 'UPDATE'
+     and OLD.status in ('publicado', 'descartado')
+     and current_setting('app.revisando', true) is distinct from 'on' then
+    raise exception 'ato publicado ou descartado so pode ser alterado pela funcao revisar_ato' using errcode = '42501';
+  end if;
+
+  if NEW.status is distinct from 'publicado' then
+    return NEW;
+  end if;
+
+  if TG_OP = 'INSERT' then
+    v_publica := true;
+  else
+    v_publica := OLD.status is distinct from 'publicado'
+      or NEW.titulo_publico is distinct from OLD.titulo_publico
+      or NEW.resumo_publico is distinct from OLD.resumo_publico
+      or NEW.tema_id is distinct from OLD.tema_id
+      or NEW.publicado_em is distinct from OLD.publicado_em;
+  end if;
+
+  if v_publica and current_setting('app.revisando', true) is distinct from 'on' then
+    raise exception 'publicacao so e permitida pela funcao revisar_ato' using errcode = '42501';
+  end if;
+
+  return NEW;
+end;
+$$;
+
 -- 4) revisar_ato: mesma assinatura da 0001; acrescenta 'corrigiu' com nota e 'despublicou'.
 create or replace function revisar_ato(
   p_ato_id uuid,
@@ -86,9 +128,17 @@ begin
     titulo_publico = case when v_novo = 'publicado' then trim(p_titulo) else titulo_publico end,
     resumo_publico = case when v_novo = 'publicado' then trim(p_resumo) else resumo_publico end,
     tema_id = case when v_novo = 'publicado' then p_tema_id else tema_id end,
-    publicado_em = case when v_novo = 'publicado' then coalesce(publicado_em, now()) else publicado_em end,
-    correcao_nota = case when p_decisao in ('corrigiu', 'despublicou') then v_nota else correcao_nota end,
-    corrigido_em = case when p_decisao in ('corrigiu', 'despublicou') then now() else corrigido_em end
+    -- primeira publicacao: sempre now() (ignora valor semeado); correcao mantem o original.
+    publicado_em = case
+      when v_novo = 'publicado' and v_antes.status = 'publicado' then publicado_em
+      when v_novo = 'publicado' then now()
+      else publicado_em end,
+    -- Primeira publicacao/descarte: sem correcao (zera qualquer valor semeado).
+    -- despublicou: a coluna guarda o motivo da retirada para auditoria e nunca aparece
+    -- no site, pois a view so lista status 'publicado'. Se um dia existir 'republicar',
+    -- ele DEVE zerar correcao_nota e corrigido_em.
+    correcao_nota = case when p_decisao in ('corrigiu', 'despublicou') then v_nota else null end,
+    corrigido_em = case when p_decisao in ('corrigiu', 'despublicou') then now() else null end
   where id = p_ato_id;
 
   insert into revisao (ato_id, editor_id, decisao, valores_antes, valores_depois, nota)

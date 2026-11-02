@@ -81,6 +81,19 @@ if (chaveSecreta) {
   });
   conferir('service_role nao insere ato publicado', insPub.error?.code === '42501', detalheErro(insPub.error));
 
+  const insCorr = await svc.from('ato').insert({
+    dou_id: 'verificar-rls-correcao',
+    tipo: 'decreto',
+    orgao: 'x',
+    data_dou: '2026-01-01',
+    titulo_original: 'x',
+    texto_original: 'x',
+    url_dou: 'https://x',
+    status: 'coletado',
+    correcao_nota: 'x',
+  });
+  conferir('service_role nao semeia correcao_nota no insert', insCorr.error?.code === '42501', detalheErro(insCorr.error));
+
   const insRev = await svc.from('revisao').insert({
     ato_id: ZERO,
     editor_id: ZERO,

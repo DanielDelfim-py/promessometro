@@ -22,6 +22,8 @@ describe('mensagemDeErro', () => {
     expect(mensagemDeErro('<script>')).toBe(mensagemDeErro('erro'));
     expect(mensagemDeErro(undefined)).toBeNull();
     expect(mensagemDeErro('nota-obrigatoria')).toMatch(/nota/i);
+    expect(mensagemDeErro('acao-invalida')).toBe('Ação inválida.');
+    expect(mensagemDeErro('texto-longo')).toBe('Texto acima do limite de tamanho.');
     expect(mensagemDeErro('ato-nao-publicado')).toMatch(/publicado/i);
   });
 });

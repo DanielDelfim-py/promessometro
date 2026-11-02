@@ -86,14 +86,14 @@ export default async function Revisao({
                     {temas?.map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
                   </select>
                 </label>
-                <label>Nota da correção (obrigatória, aparece no site) <input name="nota" required maxLength={300} /></label>
+                <label>Nota da correção (obrigatória, aparece no site) <input name="nota" required maxLength={500} /></label>
                 <button type="submit" name="acao" value="corrigir">Salvar correção</button>
               </form>
               <form action={revisarAto} className="perigo">
                 <h3>Despublicar</h3>
                 <p className="aviso">Atenção: o ato sai do site imediatamente. A nota fica registrada no histórico de revisões.</p>
                 <input type="hidden" name="ato_id" value={id} />
-                <label>Motivo (obrigatório) <input name="nota" required maxLength={300} /></label>
+                <label>Motivo (obrigatório) <input name="nota" required maxLength={500} /></label>
                 <button type="submit" name="acao" value="despublicar">Despublicar agora</button>
               </form>
             </>
