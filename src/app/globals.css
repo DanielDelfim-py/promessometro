@@ -61,3 +61,13 @@ a:hover { color: var(--link-hover); }
 .revisao input, .revisao textarea, .revisao select, .editorial-login input { font: inherit; padding: 8px; border: 1px solid var(--borda-forte); border-radius: 6px; }
 .erro { color: #b42318; }
 .aviso { background: #fff7e0; border: 1px solid #f1d27a; padding: 8px 12px; border-radius: 6px; }
+
+.conteudo-texto { max-width: 720px; margin: 0 auto; padding: 40px 24px 64px; overflow-wrap: break-word; }
+.conteudo-texto h1 { margin: 0 0 16px; font-family: var(--fonte-serif), Georgia, serif; font-size: 40px; }
+.conteudo-texto h2 { margin: 40px 0 12px; font-size: 22px; }
+.conteudo-texto p, .conteudo-texto li { font-size: 17px; line-height: 1.6; color: var(--texto); }
+.conteudo-texto p { margin: 0 0 16px; }
+.conteudo-texto ol { margin: 0 0 16px; padding-left: 24px; }
+.conteudo-texto li { margin-bottom: 12px; }
+.conteudo-texto .aviso-pagina { margin: 24px 0; padding: 16px 20px; background: var(--fundo-selo); border: 1px solid var(--borda-forte); border-radius: 8px; color: var(--texto-suave); }
+@media (max-width: 480px) { .conteudo-texto h1 { font-size: 32px; } }
