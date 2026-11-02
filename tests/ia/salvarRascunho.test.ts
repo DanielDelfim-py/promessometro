@@ -55,6 +55,10 @@ function fake(cfg: Config) {
 
 const r = { titulo: 'T', resumo: 'R', tema: 'saude', observacao: 'obs' };
 
+it('VERSAO_PROMPT e v2', () => {
+  expect(VERSAO_PROMPT).toBe('v2');
+});
+
 describe('salvarRascunho', () => {
   it('insere o rascunho e muda o ato de coletado para rascunho', async () => {
     const { sb, ops } = fake({});
@@ -69,7 +73,7 @@ describe('salvarRascunho', () => {
         tema_sugerido: 'saude',
         observacao: 'obs',
         modelo: 'm',
-        versao_prompt: VERSAO_PROMPT,
+        versao_prompt: 'v2',
       },
     });
     expect(ops[1]).toMatchObject({ tabela: 'ato', op: 'update', payload: { status: 'rascunho' } });

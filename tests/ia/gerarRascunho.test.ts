@@ -89,4 +89,30 @@ describe('gerarRascunho', () => {
     await gerarRascunho(c, ato, temas, 'm');
     expect(c.create.mock.calls[0][0].system).toContain('dado');
   });
+
+  it('prompt v2: limites 350 e 200, sem exemplo antigo, mantem regras de dado e truncamento', async () => {
+    const c = clienteCom({ titulo: 't', resumo: 'r', tema: 'saude' });
+    await gerarRascunho(c, ato, temas, 'm');
+    const sistema = c.create.mock.calls[0][0].system as string;
+    expect(sistema).toContain('350');
+    expect(sistema).toContain('200');
+    expect(sistema).not.toContain('não parece tratar de veto');
+    expect(sistema).toContain('dado');
+    expect(sistema).toContain('[texto truncado...]');
+    expect(c.create.mock.calls[0][0].tools[0].input_schema.properties.observacao.description).toContain('200');
+  });
+
+  it('observacao acima de 300 caracteres e cortada em 300 terminando com reticencias', async () => {
+    const c = clienteCom({ titulo: 't', resumo: 'r', tema: 'saude', observacao: 'a'.repeat(301) });
+    const o = (await gerarRascunho(c, ato, temas, 'm')).observacao as string;
+    expect(o).toHaveLength(300);
+    expect(o.endsWith('…')).toBe(true);
+    expect(o.slice(0, 299)).toBe('a'.repeat(299));
+  });
+
+  it('observacao com ate 300 caracteres fica intacta; so espacos vira null', async () => {
+    const exata = 'b'.repeat(300);
+    expect((await gerarRascunho(clienteCom({ titulo: 't', resumo: 'r', tema: 'saude', observacao: exata }), ato, temas, 'm')).observacao).toBe(exata);
+    expect((await gerarRascunho(clienteCom({ titulo: 't', resumo: 'r', tema: 'saude', observacao: '   ' }), ato, temas, 'm')).observacao).toBeNull();
+  });
 });
