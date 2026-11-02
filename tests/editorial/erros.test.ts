@@ -6,6 +6,9 @@ describe('codigoDeErro', () => {
     expect(codigoDeErro('ato ja revisado')).toBe('ato-ja-revisado');
     expect(codigoDeErro('sem permissao')).toBe('sem-permissao');
     expect(codigoDeErro('titulo, resumo e tema sao obrigatorios para publicar')).toBe('dados-invalidos');
+    expect(codigoDeErro('nota e obrigatoria para corrigir ou despublicar')).toBe('nota-obrigatoria');
+    expect(codigoDeErro('so e possivel corrigir ato publicado')).toBe('ato-nao-publicado');
+    expect(codigoDeErro('so e possivel despublicar ato publicado')).toBe('ato-nao-publicado');
   });
   it('qualquer outra coisa vira erro', () => {
     expect(codigoDeErro('duplicate key value violates ...')).toBe('erro');
@@ -18,6 +21,8 @@ describe('mensagemDeErro', () => {
     expect(mensagemDeErro('falha-ia')).toMatch(/IA/);
     expect(mensagemDeErro('<script>')).toBe(mensagemDeErro('erro'));
     expect(mensagemDeErro(undefined)).toBeNull();
+    expect(mensagemDeErro('nota-obrigatoria')).toMatch(/nota/i);
+    expect(mensagemDeErro('ato-nao-publicado')).toMatch(/publicado/i);
   });
 });
 

@@ -5,6 +5,7 @@ import type { AtoPublico } from '@/lib/atos/filtro';
 const base: AtoPublico = {
   id: '1', tipo: 'decreto', numero: '1', orgao: 'o', data_dou: '2026-10-30', secao: 1, edicao_extra: false,
   titulo: 't', resumo: 'r', url_dou: 'u', publicado_em: '2026-10-30T10:00:00Z', tema_nome: 'Saúde', tema_slug: 'saude',
+  correcao_nota: null, corrigido_em: null,
 };
 
 describe('agruparPorData', () => {

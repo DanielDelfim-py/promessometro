@@ -43,6 +43,8 @@ export interface AtoPublico {
   publicado_em: string;
   tema_nome: string;
   tema_slug: string;
+  correcao_nota: string | null;
+  corrigido_em: string | null;
 }
 
 type Params = Record<string, string | string[] | undefined>;
