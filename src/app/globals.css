@@ -43,6 +43,8 @@ a:hover { color: var(--link-hover); }
 .cartao h3 { margin: 0; font-size: 19px; font-weight: 600; }
 .cartao p { margin: 0; font-size: 16px; line-height: 1.5; color: var(--texto-suave); }
 .links { display: flex; flex-wrap: wrap; gap: 20px; font-size: 14px; }
+.cartao p.correcao, .revisao p.correcao { margin: 0; font-size: 14px; color: var(--texto-suave); }
+.revisao .perigo { margin-top: 32px; padding-top: 16px; border-top: 2px solid var(--borda-forte); }
 .vazio, .rodape-ia { margin: 0; font-size: 14px; color: var(--texto-suave); }
 
 /* área editorial */
