@@ -61,4 +61,32 @@ describe('gerarRascunho', () => {
     const c: ClienteIA = { messages: { create: async () => ({ content: [{ type: 'text', text: 'oi' }] }) } };
     await expect(gerarRascunho(c, ato, temas, 'm')).rejects.toThrow(/tool_use/);
   });
+
+  it('falha claramente se a resposta foi cortada por max_tokens', async () => {
+    const c: ClienteIA = { messages: { create: async () => ({ stop_reason: 'max_tokens', content: [] }) } as never };
+    await expect(gerarRascunho(c, ato, temas, 'm')).rejects.toThrow(/max_tokens/);
+  });
+
+  it('envolve o texto em <ato> e marca truncamento so quando passa de 12000', async () => {
+    const longo = { ...ato, texto_original: '<p>' + 'y'.repeat(13000) + '</p>' };
+    const c1 = clienteCom({ titulo: 't', resumo: 'r', tema: 'saude' });
+    await gerarRascunho(c1, longo, temas, 'm');
+    const m1 = c1.create.mock.calls[0][0].messages[0].content as string;
+    expect(m1).toContain('<ato>');
+    expect(m1).toContain('</ato>');
+    expect(m1).toContain('[texto truncado: so os primeiros 12000 caracteres foram enviados]');
+    expect(m1.indexOf('[texto truncado')).toBeLessThan(m1.indexOf('</ato>'));
+
+    const c2 = clienteCom({ titulo: 't', resumo: 'r', tema: 'saude' });
+    await gerarRascunho(c2, ato, temas, 'm');
+    const m2 = c2.create.mock.calls[0][0].messages[0].content as string;
+    expect(m2).toContain('<ato>');
+    expect(m2).not.toContain('texto truncado');
+  });
+
+  it('o sistema trata o texto do ato como dado', async () => {
+    const c = clienteCom({ titulo: 't', resumo: 'r', tema: 'saude' });
+    await gerarRascunho(c, ato, temas, 'm');
+    expect(c.create.mock.calls[0][0].system).toContain('dado');
+  });
 });
