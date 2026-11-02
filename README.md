@@ -31,6 +31,7 @@ Secrets necessários (em **Settings → Secrets and variables → Actions**; nun
 Pontos de atenção:
 
 - **Desativação por inatividade:** o GitHub desativa workflows agendados de repositórios públicos após 60 dias sem atividade no repositório. Se a coleta parar, abrir a aba Actions e reativar o workflow, ou fazer qualquer commit.
+- **Rascunhos mesmo com falha na coleta:** a etapa de rascunhos roda mesmo quando a coleta falha, para não travar os atos já coletados. A execução continua marcada como falha.
 - **"ZIP desatualizado":** nos primeiros dias do mês, a execução pode falhar com essa mensagem até a Imprensa Nacional publicar o ZIP do mês novo. A execução diária seguinte se recupera sozinha.
 - **Supabase free:** o projeto é pausado após cerca de 7 dias sem atividade. A execução diária mantém o projeto ativo.
 

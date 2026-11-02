@@ -36,4 +36,5 @@ jobs:
           DIAS: ${{ inputs.dias || '3' }}
         run: npm run coletar -- "$DIAS"
       - name: Gerar rascunhos
+        if: ${{ !cancelled() }}
         run: npm run rascunhos
