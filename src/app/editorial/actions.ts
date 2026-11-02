@@ -2,6 +2,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { decidirAcao } from '@/lib/editorial/acoes';
 import { codigoDeErro, ehUuid } from '@/lib/editorial/erros';
 import { decidir } from '@/lib/editorial/decidir';
 import { gerarRascunho, salvarRascunho } from '@/lib/ia/gerarRascunho';
@@ -18,10 +19,14 @@ export async function revisarAto(formData: FormData) {
   const temaId = String(formData.get('tema_id') ?? '');
   const nota = String(formData.get('nota') ?? '').trim() || null;
 
-  let decisao: 'aprovou' | 'ajustou' | 'descartou';
-  if (acao === 'descartar') {
-    decisao = 'descartou';
-  } else {
+  const tipoAcao = decidirAcao(acao);
+  if (!tipoAcao) redirect(`/editorial/ato/${atoId}?erro=dados-invalidos`);
+  if ((tipoAcao === 'corrigiu' || tipoAcao === 'despublicou') && !nota) {
+    redirect(`/editorial/ato/${atoId}?erro=nota-obrigatoria`);
+  }
+
+  let decisao: 'aprovou' | 'ajustou' | 'descartou' | 'corrigiu' | 'despublicou';
+  if (tipoAcao === 'aprovou-ou-ajustou') {
     const { data: r } = await supabase
       .from('rascunho_ia')
       .select('titulo_sugerido, resumo_sugerido, tema_sugerido')
@@ -35,14 +40,17 @@ export async function revisarAto(formData: FormData) {
       sugerido = { titulo: r.titulo_sugerido, resumo: r.resumo_sugerido, temaId: t?.id ?? null };
     }
     decisao = decidir({ titulo, resumo, temaId }, sugerido);
+  } else {
+    decisao = tipoAcao;
   }
 
   const { error } = await supabase.rpc('revisar_ato', {
     p_ato_id: atoId,
     p_decisao: decisao,
-    p_titulo: titulo,
-    p_resumo: resumo,
-    p_tema_id: temaId || null,
+    // despublicar/descartar: a funcao ignora titulo/resumo/tema.
+    p_titulo: decisao === 'despublicou' ? '' : titulo,
+    p_resumo: decisao === 'despublicou' ? '' : resumo,
+    p_tema_id: decisao === 'despublicou' ? null : temaId || null,
     p_nota: nota,
   });
   if (error) redirect(`/editorial/ato/${atoId}?erro=${codigoDeErro(error.message)}`);

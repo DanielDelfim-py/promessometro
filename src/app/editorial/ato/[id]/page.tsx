@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import { mensagemDeErro } from '@/lib/editorial/erros';
+import { dataBrasil } from '@/lib/atos/data';
 import { htmlParaTexto } from '@/lib/ia/texto';
 import { exigirEditor } from '@/lib/supabase/servidor';
 import { gerarResumoPortaria, revisarAto } from '../../actions';
@@ -66,6 +67,36 @@ export default async function Revisao({
               <button type="submit" name="acao" value="publicar">Aprovar e publicar</button>
               <button type="submit" name="acao" value="descartar" formNoValidate>Descartar</button>
             </form>
+          ) : ato.status === 'publicado' ? (
+            <>
+              <h3>Publicado no site</h3>
+              <p><strong>{ato.titulo_publico}</strong></p>
+              <p>{ato.resumo_publico}</p>
+              {ato.correcao_nota && ato.corrigido_em && (
+                <p className="correcao">Última correção em {dataBrasil(ato.corrigido_em)}: {ato.correcao_nota}</p>
+              )}
+              <form action={revisarAto}>
+                <h3>Corrigir</h3>
+                <input type="hidden" name="ato_id" value={id} />
+                <label>Título <input name="titulo" defaultValue={ato.titulo_publico ?? ''} required maxLength={140} /></label>
+                <label>Resumo <textarea name="resumo" defaultValue={ato.resumo_publico ?? ''} required rows={5} maxLength={600} /></label>
+                <label>Tema
+                  <select name="tema_id" defaultValue={ato.tema_id ?? ''} required>
+                    <option value="" disabled>Escolha…</option>
+                    {temas?.map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
+                  </select>
+                </label>
+                <label>Nota da correção (obrigatória, aparece no site) <input name="nota" required maxLength={300} /></label>
+                <button type="submit" name="acao" value="corrigir">Salvar correção</button>
+              </form>
+              <form action={revisarAto} className="perigo">
+                <h3>Despublicar</h3>
+                <p className="aviso">Atenção: o ato sai do site imediatamente. A nota fica registrada no histórico de revisões.</p>
+                <input type="hidden" name="ato_id" value={id} />
+                <label>Motivo (obrigatório) <input name="nota" required maxLength={300} /></label>
+                <button type="submit" name="acao" value="despublicar">Despublicar agora</button>
+              </form>
+            </>
           ) : (
             <p>Este ato já foi revisado ({ato.status}).</p>
           )}
