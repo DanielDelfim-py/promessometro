@@ -1,0 +1,39 @@
+name: Coletar DOU
+on:
+  schedule:
+    - cron: '0 22 * * *' # 19:00 em Brasília
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: 'Dias retroativos (use 30 na primeira carga)'
+        default: '3'
+      limite_ia:
+        description: 'Máximo de rascunhos por IA nesta execução'
+        default: '40'
+permissions:
+  contents: read
+concurrency:
+  group: coleta
+  cancel-in-progress: false
+jobs:
+  coletar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      IA_MAX_POR_EXECUCAO: ${{ inputs.limite_ia || '40' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Coletar atos do DOU
+        env:
+          DIAS: ${{ inputs.dias || '3' }}
+        run: npm run coletar -- "$DIAS"
+      - name: Gerar rascunhos
+        run: npm run rascunhos
