@@ -1,0 +1,61 @@
+:root {
+  --texto: #15171c;
+  --texto-suave: #4a505c;
+  --borda: #e3e5ea;
+  --borda-forte: #b9bec8;
+  --fundo-selo: #f3f4f6;
+  --link: #1d4ed8;
+  --link-hover: #1e3a8a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: #fff; color: var(--texto); font-family: var(--fonte-sans), system-ui, sans-serif; }
+a { color: var(--link); }
+a:hover { color: var(--link-hover); }
+
+.topo { border-bottom: 1px solid var(--borda); }
+.topo-interno { max-width: 1200px; margin: 0 auto; padding: 16px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
+.marca { color: var(--texto); text-decoration: none; font-family: var(--fonte-serif), Georgia, serif; font-weight: 700; font-size: 22px; }
+.topo nav { display: flex; gap: 24px; font-size: 15px; font-weight: 500; }
+.topo nav a { color: var(--texto); text-decoration: none; padding: 12px 0; }
+.topo nav a.ativo { color: var(--link); border-bottom: 2px solid var(--link); }
+
+.conteudo { max-width: 1200px; margin: 0 auto; padding: 40px 24px 64px; display: flex; flex-wrap: wrap; gap: 40px; }
+.filtros { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+.filtros h2 { margin: 0; font-size: 17px; }
+.filtros form { display: flex; flex-direction: column; gap: 20px; }
+.filtros fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.filtros legend { font-size: 14px; font-weight: 600; margin-bottom: 8px; padding: 0; }
+.opcao { display: flex; gap: 10px; align-items: center; font-size: 15px; min-height: 32px; }
+.campo { display: flex; flex-direction: column; gap: 6px; }
+.campo label { font-size: 14px; font-weight: 600; }
+.campo select { height: 44px; padding: 0 12px; font: inherit; border: 1px solid var(--borda-forte); border-radius: 8px; background: #fff; }
+.botao { height: 44px; border: 0; border-radius: 8px; background: var(--link); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+
+.lista { flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 24px; }
+.titulo-pagina { display: flex; flex-direction: column; gap: 8px; }
+.titulo-pagina h1 { margin: 0; font-family: var(--fonte-serif), Georgia, serif; font-size: 40px; }
+.titulo-pagina p { margin: 0; font-size: 17px; color: var(--texto-suave); line-height: 1.5; }
+.grupo { display: flex; flex-direction: column; gap: 24px; }
+.data { margin: 8px 0 0; font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--texto-suave); }
+.cartao { border: 1px solid var(--borda); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 14px; color: var(--texto-suave); }
+.selo { font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 6px; background: var(--fundo-selo); color: var(--texto); }
+.cartao h3 { margin: 0; font-size: 19px; font-weight: 600; }
+.cartao p { margin: 0; font-size: 16px; line-height: 1.5; color: var(--texto-suave); }
+.links { display: flex; flex-wrap: wrap; gap: 20px; font-size: 14px; }
+.vazio, .rodape-ia { margin: 0; font-size: 14px; color: var(--texto-suave); }
+
+/* área editorial */
+.editorial, .revisao, .editorial-login { max-width: 1100px; margin: 0 auto; padding: 24px; }
+.editorial header { display: flex; gap: 16px; align-items: center; }
+.editorial nav { display: flex; gap: 16px; margin: 16px 0; }
+.editorial nav [aria-current='page'] { font-weight: 700; }
+.editorial li { margin-bottom: 12px; }
+.duas-colunas { display: flex; flex-wrap: wrap; gap: 32px; }
+.duas-colunas > section { flex: 1 1 420px; min-width: 0; }
+.texto-original { white-space: pre-wrap; max-height: 70vh; overflow: auto; border: 1px solid var(--borda); border-radius: 8px; padding: 12px; font: inherit; font-size: 14px; }
+.revisao form, .editorial-login form { display: flex; flex-direction: column; gap: 12px; }
+.revisao label, .editorial-login label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 14px; }
+.revisao input, .revisao textarea, .revisao select, .editorial-login input { font: inherit; padding: 8px; border: 1px solid var(--borda-forte); border-radius: 6px; }
+.erro { color: #b42318; }
+.aviso { background: #fff7e0; border: 1px solid #f1d27a; padding: 8px 12px; border-radius: 6px; }
