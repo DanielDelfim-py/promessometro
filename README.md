@@ -18,7 +18,7 @@ Chaves e senhas nunca entram no repositório. Ficam em variáveis de ambiente e 
 
 ## Operação
 
-O workflow `Coletar DOU` (`.github/workflows/coletar.yml`) roda todo dia às 19:00 (Brasília). Ele executa a coleta dos atos do DOU (`npm run coletar`, por padrão 3 dias retroativos) e depois gera os rascunhos de resumo por IA (`npm run rascunhos`).
+O workflow `Coletar DOU` (`.github/workflows/coletar.yml`) roda todo dia às 19:00 (Brasília). Ele executa a coleta dos atos do DOU (`npm run coletar`, por padrão 10 dias retroativos) e depois gera os rascunhos de resumo por IA (`npm run rascunhos`).
 
 Carga inicial: em **Actions → Coletar DOU → Run workflow**, preencher `dias` com `30` e rodar.
 
@@ -32,7 +32,7 @@ Pontos de atenção:
 
 - **Desativação por inatividade:** o GitHub desativa workflows agendados de repositórios públicos após 60 dias sem atividade no repositório. Se a coleta parar, abrir a aba Actions e reativar o workflow, ou fazer qualquer commit.
 - **Rascunhos mesmo com falha na coleta:** a etapa de rascunhos roda mesmo quando a coleta falha, para não travar os atos já coletados. A execução continua marcada como falha.
-- **"ZIP desatualizado":** nos primeiros dias do mês, a execução pode falhar com essa mensagem até a Imprensa Nacional publicar o ZIP do mês novo. A execução diária seguinte se recupera sozinha.
+- **"ZIP desatualizado":** nos primeiros dias do mês, a execução pode falhar com essa mensagem até a Imprensa Nacional publicar o ZIP do mês novo. A execução diária seguinte só recupera os dias que ainda estiverem dentro da janela retroativa (10 dias por padrão). Se a mensagem persistir, depois que o ZIP novo aparecer rode o workflow manualmente com `dias=31`.
 - **Supabase free:** o projeto é pausado após cerca de 7 dias sem atividade. A execução diária mantém o projeto ativo.
 
 ## Como rodar localmente

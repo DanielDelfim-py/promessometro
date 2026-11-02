@@ -6,7 +6,7 @@ on:
     inputs:
       dias:
         description: 'Dias retroativos (use 30 na primeira carga)'
-        default: '3'
+        default: '10'
       limite_ia:
         description: 'Máximo de rascunhos por IA nesta execução'
         default: '40'
@@ -19,11 +19,6 @@ jobs:
   coletar:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      IA_MAX_POR_EXECUCAO: ${{ inputs.limite_ia || '40' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,8 +28,15 @@ jobs:
       - run: npm ci
       - name: Coletar atos do DOU
         env:
-          DIAS: ${{ inputs.dias || '3' }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          DIAS: ${{ inputs.dias || '10' }}
         run: npm run coletar -- "$DIAS"
       - name: Gerar rascunhos
         if: ${{ !cancelled() }}
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          IA_MAX_POR_EXECUCAO: ${{ inputs.limite_ia || '40' }}
         run: npm run rascunhos

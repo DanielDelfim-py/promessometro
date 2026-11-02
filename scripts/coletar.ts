@@ -1,7 +1,7 @@
 import { coletar } from '@/lib/coleta/coletar';
 import { criarClienteAdmin } from '@/lib/supabase/admin';
 
-const dias = Number(process.argv[2] ?? 3);
+const dias = Number(process.argv[2] ?? 10);
 if (!Number.isInteger(dias) || dias < 0 || dias > 120) {
   console.error('uso: npm run coletar -- <dias retroativos, 0..120>');
   process.exit(2);

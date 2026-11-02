@@ -1,9 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { limiteIa } from '@/lib/ia/limite';
 import { gerarRascunho, salvarRascunho, type AtoParaIA } from '@/lib/ia/gerarRascunho';
 import { criarClienteAdmin } from '@/lib/supabase/admin';
 
 const MODELO = process.env.IA_MODELO ?? 'claude-haiku-5-5';
-const MAX = Number(process.env.IA_MAX_POR_EXECUCAO ?? 40);
+const MAX = limiteIa(process.env.IA_MAX_POR_EXECUCAO);
 
 const supabase = criarClienteAdmin();
 const cliente = new Anthropic();
