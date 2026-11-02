@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { htmlParaTexto } from './texto';
 
 export const VERSAO_PROMPT = 'v2';
-const MAX_TEXTO = 12_000;
+const MAX_TEXTO = 40_000;
 const MAX_TITULO = 140;
 const MAX_RESUMO = 600;
 const MAX_OBSERVACAO = 300;

@@ -67,23 +67,37 @@ describe('gerarRascunho', () => {
     await expect(gerarRascunho(c, ato, temas, 'm')).rejects.toThrow(/max_tokens/);
   });
 
-  it('envolve o texto em <ato> e marca truncamento so quando passa de 12000', async () => {
-    const longo = { ...ato, texto_original: '<p>' + 'y'.repeat(13000) + '</p>' };
+  it('envia ate 40000 caracteres do ato sem marcar truncamento', async () => {
+    const cabe = { ...ato, texto_original: '<p>' + 'y'.repeat(20_000) + '</p>' };
     const c1 = clienteCom({ titulo: 't', resumo: 'r', tema: 'saude' });
-    await gerarRascunho(c1, longo, temas, 'm');
+    await gerarRascunho(c1, cabe, temas, 'm');
     const m1 = c1.create.mock.calls[0][0].messages[0].content as string;
     expect(m1).toContain('<ato>');
     expect(m1).toContain('</ato>');
-    expect(m1).toContain('[texto truncado: so os primeiros 12000 caracteres foram enviados]');
-    expect(m1).toContain(MARCADOR_TRUNCADO);
-    expect(c1.create.mock.calls[0][0].system).toContain(MARCADOR_TRUNCADO);
-    expect(m1.indexOf('[texto truncado')).toBeLessThan(m1.indexOf('</ato>'));
+    expect(m1).toContain('y'.repeat(20_000));
+    expect(m1).not.toContain(MARCADOR_TRUNCADO);
+    expect(m1).not.toContain('texto truncado');
+  });
 
-    const c2 = clienteCom({ titulo: 't', resumo: 'r', tema: 'saude' });
-    await gerarRascunho(c2, ato, temas, 'm');
-    const m2 = c2.create.mock.calls[0][0].messages[0].content as string;
-    expect(m2).toContain('<ato>');
-    expect(m2).not.toContain('texto truncado');
+  it('acima de 40000 caracteres envia exatamente os 40000 primeiros e marca truncamento', async () => {
+    const longo = { ...ato, texto_original: '<p>' + 'y'.repeat(40_001) + '</p>' };
+    const c = clienteCom({ titulo: 't', resumo: 'r', tema: 'saude' });
+    await gerarRascunho(c, longo, temas, 'm');
+    const m = c.create.mock.calls[0][0].messages[0].content as string;
+    expect(m).toContain('[texto truncado: so os primeiros 40000 caracteres foram enviados]');
+    expect(m).toContain(MARCADOR_TRUNCADO);
+    expect(c.create.mock.calls[0][0].system).toContain(MARCADOR_TRUNCADO);
+    expect(m.indexOf('[texto truncado')).toBeLessThan(m.indexOf('</ato>'));
+    const trecho = m.slice(m.indexOf('<ato>\n') + '<ato>\n'.length, m.indexOf('\n[texto truncado'));
+    expect(trecho).toBe('y'.repeat(40_000));
+  });
+
+  it('ato exatamente de 40000 caracteres nao e truncado', async () => {
+    const exato = { ...ato, texto_original: '<p>' + 'y'.repeat(40_000) + '</p>' };
+    const c = clienteCom({ titulo: 't', resumo: 'r', tema: 'saude' });
+    await gerarRascunho(c, exato, temas, 'm');
+    const m = c.create.mock.calls[0][0].messages[0].content as string;
+    expect(m).not.toContain(MARCADOR_TRUNCADO);
   });
 
   it('o sistema trata o texto do ato como dado', async () => {
