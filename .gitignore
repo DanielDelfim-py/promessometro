@@ -1,0 +1,22 @@
+# dependências e build
+node_modules/
+.next/
+out/
+dist/
+coverage/
+
+# segredos e configuração local
+.env
+.env.*
+!.env.example
+
+# dados baixados do DOU (ZIPs e XMLs extraídos)
+data/
+*.zip
+
+# sistema e editores
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
