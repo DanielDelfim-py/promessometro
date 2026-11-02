@@ -26,6 +26,9 @@ export function parseAto(xml: string, edicaoExtra: boolean): AtoBruto {
     if (!str(art[attr])) throw new Error(`XML sem ${attr.slice(2)}`);
   }
 
+  const urlDou = str(art['@_pdfPage']).replace(/^http:/, 'https:');
+  if (!urlDou.startsWith('https://')) throw new Error('XML sem pdfPage https valido');
+
   const body = art.body ?? {};
   const artCategory = str(art['@_artCategory']);
   return {
@@ -37,7 +40,7 @@ export function parseAto(xml: string, edicaoExtra: boolean): AtoBruto {
     edicao: str(art['@_editionNumber']),
     pagina: str(art['@_numberPage']),
     edicaoExtra,
-    urlDou: str(art['@_pdfPage']).replace(/^http:/, 'https:'),
+    urlDou,
     identifica: str(body.Identifica) || str(art['@_name']),
     ementa: str(body.Ementa),
     texto: str(body.Texto),

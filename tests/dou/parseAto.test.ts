@@ -53,3 +53,15 @@ describe('parseAto', () => {
     expect(() => parseAto('<xml></xml>', false)).toThrow(/article/);
   });
 });
+
+describe('parseAto urlDou', () => {
+  it('rejeita XML sem pdfPage', () => {
+    expect(() => parseAto(xmlAto({ pdfPage: '' }), false)).toThrow('XML sem pdfPage https valido');
+  });
+  it('rejeita pdfPage que nao e http(s)', () => {
+    expect(() => parseAto(xmlAto({ pdfPage: 'ftp://x' }), false)).toThrow('XML sem pdfPage https valido');
+  });
+  it('normaliza http:// para https:// e aceita', () => {
+    expect(parseAto(xmlAto({ pdfPage: 'http://x.gov.br/a' }), false).urlDou).toBe('https://x.gov.br/a');
+  });
+});
