@@ -85,9 +85,11 @@ alter table revisao enable row level security;
 alter table execucao_coleta enable row level security;
 
 create or replace function is_editor() returns boolean
-language sql security definer set search_path = public stable as $$
+language sql security definer set search_path = public, pg_temp stable as $$
   select exists (select 1 from editor where id = auth.uid());
 $$;
+revoke execute on function is_editor() from public, anon;
+grant execute on function is_editor() to authenticated;
 
 create policy tema_leitura on tema for select to anon, authenticated using (true);
 create policy editor_proprio on editor for select to authenticated using (id = auth.uid());
@@ -96,10 +98,64 @@ create policy rascunho_editor on rascunho_ia for select to authenticated using (
 create policy revisao_editor on revisao for select to authenticated using (is_editor());
 create policy execucao_editor on execucao_coleta for select to authenticated using (is_editor());
 
-revoke all on ato, rascunho_ia, revisao, editor, execucao_coleta from anon;
--- revisao é somente inserção (feita pela função revisar_ato); ninguém altera nem apaga.
-revoke insert, update, delete on revisao from anon, authenticated;
-revoke insert, update, delete on ato, rascunho_ia, editor, execucao_coleta from anon, authenticated;
+-- Privilégios explícitos (não dependem dos grants padrão do Supabase).
+-- service_role ignora RLS, por isso os triggers abaixo protegem publicação e revisao.
+revoke all on tema, editor, ato, rascunho_ia, revisao, execucao_coleta from anon, authenticated, service_role;
+grant select on tema to anon, authenticated;
+grant select on editor, ato, rascunho_ia, revisao, execucao_coleta to authenticated;
+grant select, insert, update, delete on tema, ato, rascunho_ia, execucao_coleta, editor to service_role;
+-- revisao é somente inserção, inclusive para service_role.
+grant select, insert on revisao to service_role;
+grant usage on schema public to anon, authenticated, service_role;
+
+-- Publicação só pela função revisar_ato (vale também para service_role).
+create or replace function guardar_publicacao() returns trigger
+language plpgsql security invoker set search_path = public, pg_temp as $$
+declare
+  v_publica boolean;
+begin
+  if NEW.status is distinct from 'publicado' then
+    return NEW;
+  end if;
+
+  if TG_OP = 'INSERT' then
+    v_publica := true;
+  else
+    v_publica := OLD.status is distinct from 'publicado'
+      or NEW.titulo_publico is distinct from OLD.titulo_publico
+      or NEW.resumo_publico is distinct from OLD.resumo_publico
+      or NEW.tema_id is distinct from OLD.tema_id
+      or NEW.publicado_em is distinct from OLD.publicado_em;
+  end if;
+
+  if v_publica and current_setting('app.revisando', true) is distinct from 'on' then
+    raise exception 'publicacao so e permitida pela funcao revisar_ato' using errcode = '42501';
+  end if;
+
+  return NEW;
+end;
+$$;
+
+create trigger ato_guardar_publicacao
+  before insert or update on ato
+  for each row execute function guardar_publicacao();
+
+-- revisao é append-only: nem service_role altera, apaga ou trunca.
+create or replace function bloquear_alteracao_revisao() returns trigger
+language plpgsql security invoker set search_path = public, pg_temp as $$
+begin
+  raise exception 'revisao e somente insercao' using errcode = '42501';
+  return null;
+end;
+$$;
+
+create trigger revisao_somente_insercao
+  before update or delete on revisao
+  for each row execute function bloquear_alteracao_revisao();
+
+create trigger revisao_sem_truncate
+  before truncate on revisao
+  for each statement execute function bloquear_alteracao_revisao();
 
 create view ato_publico as
 select
@@ -109,6 +165,7 @@ select
 from ato a
 join tema t on t.id = a.tema_id
 where a.status = 'publicado';
+revoke all on ato_publico from anon, authenticated, service_role;
 grant select on ato_publico to anon, authenticated;
 
 create or replace function revisar_ato(
@@ -119,7 +176,7 @@ create or replace function revisar_ato(
   p_tema_id uuid,
   p_nota text default null
 ) returns void
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_antes ato%rowtype;
   v_novo status_ato;
@@ -127,6 +184,8 @@ begin
   if not is_editor() then
     raise exception 'sem permissao' using errcode = '42501';
   end if;
+
+  perform set_config('app.revisando', 'on', true);
 
   select * into v_antes from ato where id = p_ato_id for update;
   if not found then
