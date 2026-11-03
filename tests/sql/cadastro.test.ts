@@ -177,6 +177,21 @@ describe('publicar_promessa, retirar_promessa e editar_promessa', () => {
     expect(republicada.corrigido_em).toBeNull();
   });
 
+  it('nota acima de 500 caracteres: retirar e republicar recusam', async () => {
+    const { promessaId } = await criarPromessa(b, true);
+    const longa = 'x'.repeat(501);
+    expect((await erroDe(ed('select retirar_promessa($1::uuid, $2)', [promessaId, longa]))).message).toContain('nota acima do limite');
+    await ed('select retirar_promessa($1::uuid, $2)', [promessaId, 'Sai do ar.']);
+    expect((await erroDe(ed('select publicar_promessa($1::uuid, $2)', [promessaId, longa]))).message).toContain('nota acima do limite');
+    expect((await promessa(promessaId)).estado).toBe('retirada');
+  });
+
+  it('retirar rascunho e permitido por desenho (util para duplicadas); nao exige publicacao previa', async () => {
+    const { promessaId } = await criarPromessa(b);
+    await ed('select retirar_promessa($1::uuid, $2)', [promessaId, 'Duplicada.']);
+    expect((await promessa(promessaId)).estado).toBe('retirada');
+  });
+
   it('promessa inexistente', async () => {
     const zero = '00000000-0000-4000-8000-000000000000';
     expect((await erroDe(ed('select publicar_promessa($1::uuid, null)', [zero]))).message).toContain('promessa nao encontrada');
@@ -211,5 +226,36 @@ describe('so o editor executa as funcoes do cadastro', () => {
     expect((await erroDe(b.como('anon', null, 'select publicar_promessa($1::uuid, null)', [promessaId]))).code).toBe('42501');
     expect((await erroDe(b.como('service_role', null, 'select publicar_promessa($1::uuid, null)', [promessaId]))).code).toBe('42501');
     expect((await promessa(promessaId)).estado).toBe('rascunho');
+  });
+});
+
+describe('negacao de acesso em cada funcao do cadastro', () => {
+  // Cada caso tem os proprios dados (ids reais), para a falha so poder vir da checagem de permissao.
+  const casos: [string, (b: Banco) => Promise<{ sql: string; params: unknown[] }>][] = [
+    ['aceitar_candidata', async (b) => ({ sql: 'select aceitar_candidata($1::uuid, $2, $3::uuid)', params: [(await semearPlano(b)).candidatas[0], 'T', await temaId(b, 'saude')] })],
+    ['descartar_candidata', async (b) => ({ sql: 'select descartar_candidata($1::uuid)', params: [(await semearPlano(b)).candidatas[0]] })],
+    [
+      'reabrir_candidata',
+      async (b) => {
+        const { candidatas } = await semearPlano(b);
+        await b.como('authenticated', EDITOR, 'select descartar_candidata($1::uuid)', [candidatas[0]]);
+        return { sql: 'select reabrir_candidata($1::uuid)', params: [candidatas[0]] };
+      },
+    ],
+    ['editar_promessa', async (b) => ({ sql: 'select editar_promessa($1::uuid, $2, $3::uuid, $4)', params: [(await criarPromessa(b)).promessaId, 'Outro', await temaId(b, 'saude'), 'nota'] })],
+    ['publicar_promessa', async (b) => ({ sql: 'select publicar_promessa($1::uuid, null)', params: [(await criarPromessa(b)).promessaId] })],
+    ['retirar_promessa', async (b) => ({ sql: 'select retirar_promessa($1::uuid, $2)', params: [(await criarPromessa(b, true)).promessaId, 'Motivo.'] })],
+  ];
+
+  it.each(casos)('%s: intruso recebe sem permissao (42501); anon e service_role sao barrados no privilegio', async (_nome, preparar) => {
+    const { sql, params } = await preparar(b);
+    const intruso = await erroDe(b.como('authenticated', INTRUSO, sql, params));
+    expect(intruso.code).toBe('42501');
+    expect(intruso.message).toContain('sem permissao');
+    for (const papel of ['anon', 'service_role'] as const) {
+      const e = await erroDe(b.como(papel, null, sql, params));
+      expect(e.code).toBe('42501');
+      expect(e.message).toMatch(/permission denied for function/);
+    }
   });
 });
