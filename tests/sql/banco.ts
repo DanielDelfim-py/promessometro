@@ -5,7 +5,7 @@ import path from 'node:path';
 const PASTA = path.resolve(import.meta.dirname, '..', '..', 'supabase', 'migrations');
 
 /** Migrações na ordem em que foram aplicadas no banco ao vivo. */
-export const MIGRACOES = ['0001_schema.sql', '0002_correcoes.sql'];
+export const MIGRACOES = ['0001_schema.sql', '0002_correcoes.sql', '0003_promessas.sql'];
 
 /** "Hoje" fixo dos testes (a 0003 cria hoje_sp(); os cenários de 2027 precisam de um hoje em 2027). */
 export const HOJE_TESTE = '2027-06-30';
@@ -116,6 +116,107 @@ export async function inserirAto(b: Banco, dataDou: string): Promise<string> {
      values ($1, 'decreto', 'Presidência da República', $2::date, 'DECRETO DE TESTE', '<p>Art. 1º Teste.</p>', $3)
      returning id`,
     [`teste-${seqAto}`, dataDou, `https://www.in.gov.br/teste/${seqAto}`],
+  );
+  return r.id;
+}
+
+// Página 1 tem quebras de linha no meio da frase, como sai do PDF.
+export const TEXTO_P1 =
+  'Plano de governo 2027-2030.\nVamos construir 500 novas creches em todo o\npaís até 2030, com prioridade para as regiões mais pobres.';
+export const TEXTO_P2 = 'Saúde.\nGarantir atendimento especializado em até 30 dias pelo SUS.';
+export const CITACAO_1 = 'Vamos construir 500 novas creches em todo o país até 2030';
+export const CITACAO_2 = 'Garantir atendimento especializado em até 30 dias pelo SUS.';
+
+let seqPlano = 0;
+export function novoSha(): string {
+  seqPlano++;
+  return seqPlano.toString(16).padStart(64, '0');
+}
+
+export function planoJson(sha: string = novoSha(), paginas = 2) {
+  return {
+    titulo: 'Plano de teste',
+    candidato: 'Candidatura de teste',
+    cargo: 'Presidente da República',
+    ano_eleicao: 2026,
+    fonte_url: 'https://www.tse.jus.br/plano.pdf',
+    arquivo_sha256: sha,
+    paginas,
+  };
+}
+
+export const CANDIDATAS_TESTE = [
+  {
+    pagina: 1,
+    citacao: CITACAO_1,
+    titulo_sugerido: 'Construir 500 creches',
+    tema_sugerido: 'educacao',
+    concretude: 'concreta',
+    motivo_concretude: '1 sim, 2 sim, 3 sim, 4 sim.',
+    modelo: 'modelo-teste',
+    versao_prompt: 'plano-v1',
+  },
+  {
+    pagina: 2,
+    citacao: CITACAO_2,
+    titulo_sugerido: 'Atendimento especializado em 30 dias',
+    tema_sugerido: 'saude',
+    concretude: 'intermediaria',
+    motivo_concretude: null,
+    modelo: 'modelo-teste',
+    versao_prompt: 'plano-v1',
+  },
+];
+
+export interface ResultadoImportacaoSql {
+  plano_id: string;
+  paginas: number;
+  candidatas: number;
+}
+
+/** Chama importar_plano como a chave de serviço (o script de importação faz o mesmo pela API). */
+export async function importar(
+  b: Banco,
+  plano: Record<string, unknown>,
+  paginas: string[],
+  candidatas: Record<string, unknown>[],
+): Promise<ResultadoImportacaoSql> {
+  const [r] = await b.como<{ r: ResultadoImportacaoSql }>(
+    'service_role',
+    null,
+    'select importar_plano($1::jsonb, $2::jsonb, $3::jsonb) as r',
+    [JSON.stringify(plano), JSON.stringify(paginas), JSON.stringify(candidatas)],
+  );
+  return r.r;
+}
+
+/** Importa um plano de 2 páginas com 2 candidatas pendentes. */
+export async function semearPlano(b: Banco): Promise<{ planoId: string; candidatas: string[] }> {
+  const r = await importar(b, planoJson(), [TEXTO_P1, TEXTO_P2], CANDIDATAS_TESTE);
+  const cands = await b.dono<{ id: string }>('select id from promessa_candidata where plano_id = $1::uuid order by pagina', [r.plano_id]);
+  return { planoId: r.plano_id, candidatas: cands.map((c) => c.id) };
+}
+
+/** Cria promessa direto na tabela com a flag ligada (só para testar guardas, sem as funções). */
+export async function promessaDireta(b: Banco, planoId: string, estado: 'rascunho' | 'publicada' = 'rascunho'): Promise<string> {
+  const tema = await temaId(b, 'educacao');
+  const [r] = await b.comFlag<{ id: string }>(
+    `insert into promessa (plano_id, tema_id, titulo, texto_original, pagina, fonte_url, estado, publicada_em)
+     values ($1::uuid, $2::uuid, 'Promessa direta', $3, 1, 'https://www.tse.jus.br/plano.pdf', $4::estado_publicacao,
+             case when $4::estado_publicacao = 'publicada' then now() end)
+     returning id`,
+    [planoId, tema, CITACAO_1, estado],
+  );
+  return r.id;
+}
+
+/** Cria evidência direto na tabela com a flag ligada (só para testes). */
+export async function evidenciaDireta(b: Banco, promessaId: string, dataFato = '2027-03-01'): Promise<string> {
+  const [r] = await b.comFlag<{ id: string }>(
+    `insert into evidencia (promessa_id, tipo, fonte_url, descricao, data_fato, criado_por)
+     values ($1::uuid, 'documento', 'https://www.gov.br/doc', 'Documento de teste', $2::date, $3::uuid)
+     returning id`,
+    [promessaId, dataFato, EDITOR],
   );
   return r.id;
 }
