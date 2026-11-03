@@ -36,7 +36,8 @@ conferir('ato_publico nao expoe texto_original', colunaSecreta.error?.code === '
 const tema = await anon.from('tema').select('slug');
 conferir('anon le temas', !tema.error && (tema.data?.length ?? 0) >= 13, `${tema.data?.length} temas`);
 
-const temaEscrita = await anon.from('tema').insert({ nome: 'x', slug: 'x' });
+// Sem slug (not null): se o privilegio faltasse, o insert falharia com 23502 e nada ficaria gravado.
+const temaEscrita = await anon.from('tema').insert({ nome: 'verificar-rls' });
 conferir('anon nao escreve tema', temaEscrita.error?.code === '42501', detalheErro(temaEscrita.error));
 
 const rev = await anon.from('revisao').select('id').limit(1);
@@ -48,6 +49,7 @@ conferir('anon nao le execucao_coleta', exec.error?.code === '42501', detalheErr
 const editor = await anon.from('editor').select('id').limit(1);
 conferir('anon nao le editor', editor.error?.code === '42501', detalheErro(editor.error));
 
+// url_dou sem https viola o check url_dou_https (23514): sem o bloqueio nada ficaria gravado.
 const ins = await anon.from('ato').insert({
   dou_id: 'x',
   tipo: 'decreto',
@@ -126,6 +128,11 @@ if (chaveSecreta) {
   const svc = createClient(url, chaveSecreta, { auth: { persistSession: false } });
   const ZERO = '00000000-0000-0000-0000-000000000000';
 
+  // Regra de todas as escritas abaixo: a carga viola um CHECK, NOT NULL ou chave estrangeira, que o Postgres
+  // avalia DEPOIS da checagem de privilegio e dos gatilhos BEFORE. Com a protecao o erro e 42501 (ou a mensagem
+  // do gatilho); sem ela seria 23514/23502/23503 e nenhuma linha ficaria gravada. UPDATE/DELETE usam um id
+  // inexistente (zero linhas afetadas).
+  // url_dou sem https viola url_dou_https e tema_id inexistente viola a chave estrangeira.
   const insPub = await svc.from('ato').insert({
     dou_id: 'verificar-rls',
     tipo: 'decreto',
@@ -133,7 +140,7 @@ if (chaveSecreta) {
     data_dou: '2026-01-01',
     titulo_original: 'x',
     texto_original: 'x',
-    url_dou: 'https://x',
+    url_dou: 'sem-https',
     status: 'publicado',
     titulo_publico: 'x',
     resumo_publico: 'x',
@@ -142,6 +149,7 @@ if (chaveSecreta) {
   });
   conferir('service_role nao insere ato publicado', insPub.error?.code === '42501', detalheErro(insPub.error));
 
+  // url_dou sem https viola url_dou_https (23514), avaliado depois do gatilho que recusa correcao_nota (42501).
   const insCorr = await svc.from('ato').insert({
     dou_id: 'verificar-rls-correcao',
     tipo: 'decreto',
@@ -149,7 +157,7 @@ if (chaveSecreta) {
     data_dou: '2026-01-01',
     titulo_original: 'x',
     texto_original: 'x',
-    url_dou: 'https://x',
+    url_dou: 'sem-https',
     status: 'coletado',
     correcao_nota: 'x',
   });
@@ -183,6 +191,7 @@ if (chaveSecreta) {
   const updEstado = await svc.from('promessa').update({ estado: 'publicada' }).eq('id', ZERO);
   conferir('service_role nao altera promessa.estado', negado(updEstado.error), detalheErro(updEstado.error));
 
+  // plano_id e tema_id inexistentes: violam a chave estrangeira (23503).
   const insProm = await svc.from('promessa').insert({
     plano_id: ZERO,
     tema_id: ZERO,
@@ -203,14 +212,17 @@ if (chaveSecreta) {
     cargo: 'x',
     ano_eleicao: 2026,
     fonte_url: 'https://x',
-    arquivo_sha256: '0'.repeat(64),
+    // sha256 fora do formato viola plano_sha256_formato (23514): sem o bloqueio nada ficaria gravado.
+    arquivo_sha256: 'nao-e-sha',
     paginas: 1,
   });
   conferir('service_role nao insere plano direto', negado(insPlano.error), detalheErro(insPlano.error));
 
+  // plano_id inexistente: viola a chave estrangeira (23503).
   const insPagina = await svc.from('plano_pagina').insert({ plano_id: ZERO, numero: 1, texto: 'x' });
   conferir('service_role nao insere plano_pagina direto', negado(insPagina.error), detalheErro(insPagina.error));
 
+  // plano_id inexistente: viola a chave estrangeira (23503).
   const insCand = await svc.from('promessa_candidata').insert({
     plano_id: ZERO,
     pagina: 1,
@@ -233,6 +245,7 @@ if (chaveSecreta) {
   const lerRevP = await svc.from('revisao_promessa').select('id').limit(1);
   conferir('service_role nao le revisao_promessa', negado(lerRevP.error), detalheErro(lerRevP.error));
 
+  // promessa_id e editor_id inexistentes: violam a chave estrangeira (23503).
   const insRevP = await svc.from('revisao_promessa').insert({
     promessa_id: ZERO,
     editor_id: ZERO,
@@ -244,6 +257,7 @@ if (chaveSecreta) {
   });
   conferir('service_role nao insere revisao_promessa', negado(insRevP.error), detalheErro(insRevP.error));
 
+  // promessa_id e criado_por inexistentes: violam a chave estrangeira (23503); tipo documento sem ato e coerente.
   const insEv = await svc.from('evidencia').insert({
     promessa_id: ZERO,
     tipo: 'documento',
@@ -255,6 +269,7 @@ if (chaveSecreta) {
   conferir('service_role nao insere evidencia', negado(insEv.error), detalheErro(insEv.error));
 
   // service_role pode inserir sugestao e proposta pendente; qualquer outra coisa o gatilho recusa (42501).
+  // estado confirmado sem decidido_por viola vinculo_decisao_completa (23514) e ato/promessa inexistentes violam a chave estrangeira.
   const insVinc = await svc.from('vinculo_ato_promessa').insert({
     ato_id: ZERO,
     promessa_id: ZERO,
@@ -270,6 +285,7 @@ if (chaveSecreta) {
     detalheErro(insVinc.error),
   );
 
+  // promessa_id inexistente: viola a chave estrangeira (23503).
   const insProp = await svc.from('proposta_status').insert({
     promessa_id: ZERO,
     status_proposto: 'cumprida',

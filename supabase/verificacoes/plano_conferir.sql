@@ -1,9 +1,18 @@
 -- Conferencia da importacao do plano de governo (Task 19 do plano 2A).
 -- Abra este arquivo, copie TUDO (Ctrl+A e depois Ctrl+C), cole numa nova consulta do Editor de SQL do
 -- Supabase e execute. O resultado e UMA linha sobre o plano importado mais recente.
--- Esperado para o plano real: planos_importados = 1, paginas_no_pdf = 84, paginas_gravadas = 84 e candidatas > 0.
--- Se a migracao 0003 nao foi aplicada, as contagens mostram 0 (sem erro).
--- Esta consulta so le; nao altera nada.
+-- Esta consulta SO LE: nao muda nada no banco.
+-- O que cada coluna deve mostrar logo depois da importacao do plano real:
+--   planos_importados = 1 (se mostrar 2 ou mais, o plano foi importado mais de uma vez).
+--   titulo = titulo do plano de governo importado (vazio se nada foi importado).
+--   paginas_no_pdf = 84 (paginas que o programa leu no PDF).
+--   paginas_gravadas = 84 (tem de ser igual a paginas_no_pdf).
+--   candidatas = mais de 0 (promessas candidatas extraidas pela IA).
+--   concretas + intermediarias + genericas = candidatas (a soma das tres tem de bater).
+--   aceitas = 0, descartadas = 0 e publicadas = 0 (ninguem decidiu nada ainda).
+-- Depois que o editor comecar a trabalhar, aceitas, descartadas e publicadas passam a crescer;
+-- aceitas + descartadas nunca passa de candidatas e publicadas nunca passa de aceitas.
+-- Se a migracao 0003 nao foi aplicada, as contagens mostram 0 e titulo fica vazio (sem erro).
 with x as (
   select case when to_regclass('public.plano') is null then null
     else query_to_xml($q$

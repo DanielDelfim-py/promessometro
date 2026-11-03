@@ -70,3 +70,36 @@ describe('supabase/verificacoes/plano_conferir.sql', () => {
     expect(n('aceitas')).toBe(0);
   });
 });
+
+describe('supabase/verificacoes: seguranca do texto', () => {
+  it('nenhuma palavra que dispara o aviso de operacao destrutiva (nem em comentarios)', () => {
+    for (const [nome, texto] of [['0003_conferir.sql', conferir0003], ['plano_conferir.sql', conferirPlano]]) {
+      const achadas = texto.match(/truncate|drop|delete|update|insert|alter|grant|revoke/gi) ?? [];
+      expect({ nome, achadas }).toEqual({ nome, achadas: [] });
+    }
+  });
+});
+
+describe('supabase/verificacoes/0003_conferir.sql: cada coluna consegue virar false', () => {
+  const mutacoes: [string, string, string][] = [
+    ['chave_nao_muda_promessa', 'update em promessa', 'grant update on promessa to service_role'],
+    ['chave_nao_le_historico', 'select em revisao_promessa', 'grant select on revisao_promessa to service_role'],
+    ['chave_nao_grava_plano_direto', 'insert em plano', 'grant insert on plano to service_role'],
+    ['chave_nao_grava_evidencia', 'insert em evidencia', 'grant insert on evidencia to service_role'],
+    ['so_a_chave_importa', 'sem execute para service_role', 'revoke execute on function importar_plano(jsonb, jsonb, jsonb) from service_role'],
+    ['so_a_chave_importa', 'execute para anon', 'grant execute on function importar_plano(jsonb, jsonb, jsonb) to anon'],
+    ['publico_nao_le_promessa', 'select de anon em promessa', 'grant select on promessa to anon'],
+    ['rls_ligada', 'rls desligada em promessa', 'alter table promessa disable row level security'],
+  ];
+  it.each(mutacoes)('%s vira false com: %s', async (coluna, _desc, sql) => {
+    const b = await criarBanco(MIGRACOES, null);
+    try {
+      await b.dono(sql);
+      const [l] = await b.dono<Record<string, boolean>>(conferir0003);
+      expect(l[coluna]).toBe(false);
+      expect(Object.entries(l).filter(([k, v]) => v !== true && k !== coluna)).toEqual([]);
+    } finally {
+      await b.fechar();
+    }
+  }, 60_000);
+});

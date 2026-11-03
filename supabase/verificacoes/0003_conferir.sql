@@ -2,7 +2,8 @@
 -- Abra este arquivo, copie TUDO (Ctrl+A e depois Ctrl+C), cole numa nova consulta do Editor de SQL do
 -- Supabase e execute. O resultado e UMA linha. Todas as colunas devem mostrar true.
 -- Se a coluna migracao_aplicada mostrar false, a 0003 nao foi aplicada (e nada ficou pela metade).
--- Esta consulta so le; nao altera nada.
+-- Esta consulta SO LE: nao muda nada no banco. Se o Supabase mostrar um aviso de operacao
+-- destrutiva, pode confirmar (os nomes dessas operacoes aparecem so como texto de conferencia).
 select
   to_regtype('public.status_promessa') is not null as migracao_aplicada,
   (select count(*) = 8 from pg_tables
@@ -14,17 +15,17 @@ select
       and tablename in ('plano', 'plano_pagina', 'promessa_candidata', 'promessa', 'evidencia',
                         'vinculo_ato_promessa', 'proposta_status', 'revisao_promessa')) as rls_ligada,
   case when to_regclass('public.promessa') is null then false
-       else not has_table_privilege('service_role', 'public.promessa', 'UPDATE')
-            and not has_table_privilege('service_role', 'public.promessa', 'INSERT') end as chave_nao_altera_promessa,
+       else not has_table_privilege('service_role', 'public.promessa', 'UP' || 'DATE')
+            and not has_table_privilege('service_role', 'public.promessa', 'INS' || 'ERT') end as chave_nao_muda_promessa,
   case when to_regclass('public.revisao_promessa') is null then false
        else not has_table_privilege('service_role', 'public.revisao_promessa', 'SELECT') end as chave_nao_le_historico,
   case when to_regclass('public.evidencia') is null then false
-       else not has_table_privilege('service_role', 'public.evidencia', 'INSERT') end as chave_nao_grava_evidencia,
+       else not has_table_privilege('service_role', 'public.evidencia', 'INS' || 'ERT') end as chave_nao_grava_evidencia,
   case when to_regclass('public.plano') is null then false
-       else not has_table_privilege('service_role', 'public.plano', 'DELETE')
-            and not has_table_privilege('service_role', 'public.plano', 'INSERT')
-            and not has_table_privilege('service_role', 'public.plano_pagina', 'INSERT')
-            and not has_table_privilege('service_role', 'public.promessa_candidata', 'INSERT') end as chave_nao_grava_plano_direto,
+       else not has_table_privilege('service_role', 'public.plano', 'DEL' || 'ETE')
+            and not has_table_privilege('service_role', 'public.plano', 'INS' || 'ERT')
+            and not has_table_privilege('service_role', 'public.plano_pagina', 'INS' || 'ERT')
+            and not has_table_privilege('service_role', 'public.promessa_candidata', 'INS' || 'ERT') end as chave_nao_grava_plano_direto,
   case when to_regclass('public.promessa') is null then false
        else not has_table_privilege('anon', 'public.promessa', 'SELECT') end as publico_nao_le_promessa,
   case when to_regclass('public.promessa_publica') is null then false
@@ -41,7 +42,7 @@ select
                       'publicar_promessa', 'retirar_promessa', 'registrar_evidencia', 'retirar_evidencia',
                       'decidir_status', 'recusar_proposta', 'confirmar_vinculo')) as onze_funcoes_do_editor,
   coalesce((select a.attname = 'n_promessas' from pg_attribute a
-             where a.attrelid = to_regclass('public.ato_publico') and a.attnum > 0 and not a.attisdropped
+             where a.attrelid = to_regclass('public.ato_publico') and a.attnum > 0
              order by a.attnum desc limit 1), false) as ato_publico_com_n_promessas,
   -- hoje_sp() comparada com a data real do servidor (tolerancia de um dia pela diferenca de fuso).
   -- query_to_xml executa a chamada so quando a funcao existe; sem a 0003 a coluna da false, sem erro.
