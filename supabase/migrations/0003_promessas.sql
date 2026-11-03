@@ -1140,3 +1140,73 @@ grant execute on function retirar_evidencia(uuid, text) to authenticated;
 grant execute on function decidir_status(uuid, status_promessa, uuid[], text, boolean, uuid) to authenticated;
 grant execute on function recusar_proposta(uuid, text) to authenticated;
 grant execute on function confirmar_vinculo(uuid, boolean, text) to authenticated;
+
+-- =====================================================================
+-- PARTE D: visoes publicas
+-- Estas visoes sao propositalmente com direitos do dono (nao usam security_invoker):
+-- assim anon nunca precisa de privilegio nas tabelas. NAO troque para security_invoker,
+-- pois as paginas publicas deixariam de funcionar. O aviso do advisor do Supabase e esperado.
+-- Colunas sempre explicitas; nada de decidido_por, ids de editor, justificativas de IA, propostas,
+-- candidatas, texto integral do plano nem dados de ato nao publicado.
+-- =====================================================================
+
+create view promessa_publica as
+select
+  p.id, p.titulo, p.texto_original, p.pagina, p.fonte_url, p.mandato, p.status,
+  p.publicada_em, p.status_atualizado_em,
+  t.nome as tema_nome, t.slug as tema_slug,
+  pl.titulo as plano_titulo, pl.candidato as plano_candidato, pl.ano_eleicao as plano_ano,
+  p.correcao_nota, p.corrigido_em
+from promessa p
+join tema t on t.id = p.tema_id
+join plano pl on pl.id = p.plano_id
+where p.estado = 'publicada';
+
+-- So mudancas de status (antes, depois, nota, data); sem identidade do editor.
+create view historico_status_publico as
+select r.id, r.promessa_id, r.status_antes, r.status_depois, r.nota, r.criado_em
+from revisao_promessa r
+join promessa p on p.id = r.promessa_id
+where p.estado = 'publicada' and r.decisao = 'mudou_status';
+
+-- Evidencias retiradas (retirar_evidencia) nao aparecem. Em evidencia de ato, fonte_url e o link
+-- do proprio ato (registrar_evidencia e confirmar_vinculo), entao so aparece com o ato publicado.
+create view evidencia_publica as
+select
+  e.id, e.promessa_id, e.tipo,
+  case when e.ato_id is null or a.status = 'publicado' then e.fonte_url end as fonte_url,
+  e.descricao, e.data_fato, e.criado_em,
+  case when a.status = 'publicado' then a.id end as ato_id,
+  case when a.status = 'publicado' then a.titulo_publico end as ato_titulo,
+  case when a.status = 'publicado' then a.url_dou end as ato_url_dou
+from evidencia e
+join promessa p on p.id = e.promessa_id
+left join ato a on a.id = e.ato_id
+where p.estado = 'publicada' and e.retirada_em is null;
+
+revoke all on promessa_publica, historico_status_publico, evidencia_publica from anon, authenticated, service_role;
+grant select on promessa_publica, historico_status_publico, evidencia_publica to anon, authenticated;
+
+-- ato_publico: mesmas colunas e ordem da 0002, mais n_promessas ao final (create or replace exige isso).
+-- Conta vinculos confirmados com promessas publicadas que tenham evidencia ativa (nao retirada) do ato.
+-- Esta view e propositalmente com direitos do dono (nao usa security_invoker). Ver comentario da 0001.
+create or replace view ato_publico as
+select
+  a.id, a.tipo, a.numero, a.orgao, a.data_dou, a.secao, a.edicao_extra,
+  a.titulo_publico as titulo, a.resumo_publico as resumo, a.url_dou, a.publicado_em,
+  t.nome as tema_nome, t.slug as tema_slug,
+  a.correcao_nota, a.corrigido_em,
+  (
+    select count(*)::integer
+    from vinculo_ato_promessa v
+    join promessa p on p.id = v.promessa_id
+    where v.ato_id = a.id and v.estado = 'confirmado' and p.estado = 'publicada'
+      and exists (
+        select 1 from evidencia e
+        where e.promessa_id = v.promessa_id and e.ato_id = v.ato_id and e.retirada_em is null
+      )
+  ) as n_promessas
+from ato a
+join tema t on t.id = a.tema_id
+where a.status = 'publicado';
+grant select on ato_publico to anon, authenticated;
