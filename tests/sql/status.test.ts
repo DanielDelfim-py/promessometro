@@ -374,3 +374,77 @@ describe('negacao de acesso em cada funcao de status', () => {
     }
   });
 });
+
+describe('fix round 1: registrar_evidencia usa os dados do proprio ato', () => {
+  it('ato de 2026 nao vira evidencia mesmo com data de 2027 informada pelo chamador', async () => {
+    const { promessaId } = await criarPromessa(b, true);
+    const ato2026 = await inserirAto(b, '2026-06-01');
+    const e = await erroDe(registrar(promessaId, { tipo: 'ato_dou', ato: ato2026, url: null, data: '2027-03-01' }));
+    expect(e.message).toContain('data do fato anterior a 2027-01-01');
+    expect(e.code).toBe('P0001');
+  });
+
+  it('ato de 2027: link e data do ato valem, os do chamador sao ignorados', async () => {
+    const { promessaId } = await criarPromessa(b, true);
+    const ato = await inserirAto(b, '2027-02-11');
+    const id = await registrar(promessaId, { tipo: 'ato_dou', ato, url: 'https://outro.example/x', data: '2027-03-01' });
+    const [e] = await b.dono<{ fonte_url: string; data_fato: string }>('select fonte_url, data_fato::text from evidencia where id = $1::uuid', [id]);
+    expect(e.fonte_url).toMatch(/^https:\/\/www\.in\.gov\.br\/teste\//);
+    expect(e.data_fato).toBe('2027-02-11');
+  });
+
+  it('evidencia que nao e de ato continua usando os valores do chamador', async () => {
+    const { promessaId } = await criarPromessa(b, true);
+    const id = await registrar(promessaId, { url: 'https://www.gov.br/outro.pdf', data: '2027-04-02' });
+    const [e] = await b.dono('select fonte_url, data_fato::text from evidencia where id = $1::uuid', [id]);
+    expect(e).toEqual({ fonte_url: 'https://www.gov.br/outro.pdf', data_fato: '2027-04-02' });
+  });
+});
+
+describe('fix round 1: decidir_status e propostas', () => {
+  const SQL_PROPOSTA = `insert into proposta_status (promessa_id, status_proposto, justificativa, evidencia_ids, modelo, versao_prompt)
+                        values ($1::uuid, $2::status_promessa, 'Justificativa.', $3::uuid[], 'modelo-teste', 'status-v1') returning id`;
+
+  it('status nulo e recusado com mensagem propria', async () => {
+    const { promessaId } = await criarPromessa(b, true);
+    const ev = await registrar(promessaId);
+    const e = await erroDe(ed(SQL_DECIDIR, [promessaId, null, ids(ev), 'Nota.', false, null]));
+    expect(e.message).toContain('status obrigatorio');
+    expect(e.code).toBe('P0001');
+  });
+
+  it('lista de evidencias com NULL e invalida', async () => {
+    const { promessaId } = await criarPromessa(b, true);
+    const ev = await registrar(promessaId);
+    const e = await erroDe(ed(SQL_DECIDIR, [promessaId, 'em_andamento', `{${ev},NULL}`, 'Nota.', false, null]));
+    expect(e.message).toContain('evidencia invalida');
+    expect(e.code).toBe('P0001');
+  });
+
+  it('proposta ja decidida nao pode ser usada de novo', async () => {
+    const { promessaId } = await criarPromessa(b, true);
+    const ev = await registrar(promessaId);
+    const [prop] = await b.como<{ id: string }>('service_role', null, SQL_PROPOSTA, [promessaId, 'cumprida', ids(ev)]);
+    await ed('select recusar_proposta($1::uuid, $2)', [prop.id, 'Nao comprova.']);
+    const e = await erroDe(ed(SQL_DECIDIR, [promessaId, 'em_andamento', ids(ev), 'Nota.', false, prop.id]));
+    expect(e.message).toContain('proposta invalida');
+    expect(e.code).toBe('P0001');
+  });
+
+  it('retirar evidencia substitui a proposta pendente que a cita e preserva a que cita outra', async () => {
+    const a = await criarPromessa(b, true);
+    const evA1 = await registrar(a.promessaId);
+    const [propA] = await b.como<{ id: string }>('service_role', null, SQL_PROPOSTA, [a.promessaId, 'em_andamento', ids(evA1)]);
+    await ed('select retirar_evidencia($1::uuid, $2)', [evA1, 'Erro.']);
+    const [pa] = await b.dono<{ estado: string; decidido_por: string }>('select estado::text, decidido_por from proposta_status where id = $1::uuid', [propA.id]);
+    expect(pa).toEqual({ estado: 'substituida', decidido_por: EDITOR });
+
+    const c = await criarPromessa(b, true);
+    const evC1 = await registrar(c.promessaId);
+    const evC2 = await registrar(c.promessaId, { descricao: 'Outro relatorio' });
+    const [propC] = await b.como<{ id: string }>('service_role', null, SQL_PROPOSTA, [c.promessaId, 'em_andamento', ids(evC2)]);
+    await ed('select retirar_evidencia($1::uuid, $2)', [evC1, 'Erro.']);
+    const [pc] = await b.dono<{ estado: string }>('select estado::text from proposta_status where id = $1::uuid', [propC.id]);
+    expect(pc.estado).toBe('pendente');
+  });
+});

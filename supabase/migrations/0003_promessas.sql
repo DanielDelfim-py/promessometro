@@ -839,8 +839,10 @@ begin
     if not found then
       raise exception 'ato nao encontrado';
     end if;
-    v_url := coalesce(v_url, v_ato.url_dou);
-    v_data := coalesce(v_data, v_ato.data_dou);
+    -- Evidencia de ato: SEMPRE o link e a data do proprio ato; p_fonte_url e p_data_fato do chamador sao ignorados
+    -- (senao um ato de 2026 passaria pela data de corte). Mesma regra de confirmar_vinculo.
+    v_url := v_ato.url_dou;
+    v_data := v_ato.data_dou;
     if exists (select 1 from evidencia where promessa_id = p_promessa_id and ato_id = p_ato_id and retirada_em is null) then
       raise exception 'evidencia ja registrada';
     end if;
@@ -882,6 +884,7 @@ declare
   v_ev evidencia%rowtype;
   v_promessa promessa%rowtype;
   v_nota text := nullif(btrim(coalesce(p_nota, '')), '');
+  v_pid uuid;
 begin
   if not is_editor() then
     raise exception 'sem permissao' using errcode = '42501';
@@ -889,10 +892,13 @@ begin
 
   perform set_config('app.revisando', 'on', true);
 
-  select * into v_ev from evidencia where id = p_evidencia_id for update;
+  -- Ordem de travas igual em todas as funcoes: PROMESSA primeiro, depois evidencia/vinculo (evita deadlock).
+  select promessa_id into v_pid from evidencia where id = p_evidencia_id;
   if not found then
     raise exception 'evidencia nao encontrada';
   end if;
+  select * into v_promessa from promessa where id = v_pid for update;
+  select * into v_ev from evidencia where id = p_evidencia_id for update;
   if v_ev.retirada_em is not null then
     raise exception 'evidencia ja retirada';
   end if;
@@ -902,7 +908,6 @@ begin
   if length(v_nota) > 500 then
     raise exception 'nota acima do limite';
   end if;
-  select * into v_promessa from promessa where id = v_ev.promessa_id for update;
 
   update evidencia
      set retirada_em = now(), retirada_por = auth.uid(), retirada_nota = v_nota
@@ -913,6 +918,11 @@ begin
        set estado = 'rejeitado', decidido_por = auth.uid(), decidido_em = now()
      where ato_id = v_ev.ato_id and promessa_id = v_ev.promessa_id;
   end if;
+
+  -- Proposta pendente que cita a evidencia retirada perdeu o fundamento (flag ligada: o gatilho permite).
+  update proposta_status
+     set estado = 'substituida', decidido_por = auth.uid(), decidido_em = now()
+   where promessa_id = v_ev.promessa_id and estado = 'pendente' and p_evidencia_id = any(evidencia_ids);
 
   insert into revisao_promessa (promessa_id, editor_id, decisao, status_antes, status_depois, nota, valores_antes, valores_depois)
   values (
@@ -953,7 +963,10 @@ begin
   if v_antes.estado <> 'publicada' then
     raise exception 'promessa nao publicada';
   end if;
-  if p_status is null or p_status = v_antes.status then
+  if p_status is null then
+    raise exception 'status obrigatorio';
+  end if;
+  if p_status = v_antes.status then
     raise exception 'status igual ao atual';
   end if;
   if v_nota is null then
@@ -1055,6 +1068,7 @@ declare
   v_ato ato%rowtype;
   v_desc text := nullif(btrim(coalesce(p_descricao, '')), '');
   v_id uuid;
+  v_pid uuid;
 begin
   if not is_editor() then
     raise exception 'sem permissao' using errcode = '42501';
@@ -1066,10 +1080,13 @@ begin
     raise exception 'decisao do vinculo obrigatoria';
   end if;
 
-  select * into v_v from vinculo_ato_promessa where id = p_vinculo_id for update;
+  -- Ordem de travas: PROMESSA primeiro, depois o vinculo (igual a registrar_evidencia e retirar_evidencia).
+  select promessa_id into v_pid from vinculo_ato_promessa where id = p_vinculo_id;
   if not found then
     raise exception 'vinculo nao encontrado';
   end if;
+  select estado into v_estado from promessa where id = v_pid for update;
+  select * into v_v from vinculo_ato_promessa where id = p_vinculo_id for update;
   if v_v.estado <> 'sugerido' then
     raise exception 'vinculo ja decidido';
   end if;
@@ -1087,7 +1104,6 @@ begin
   if length(v_desc) > 500 then
     raise exception 'descricao acima do limite';
   end if;
-  select estado into v_estado from promessa where id = v_v.promessa_id for update;
   if v_estado is distinct from 'publicada' then
     raise exception 'promessa nao publicada';
   end if;
