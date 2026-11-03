@@ -91,15 +91,30 @@ describe('supabase/verificacoes/0003_conferir.sql: cada coluna consegue virar fa
     ['publico_nao_le_promessa', 'select de anon em promessa', 'grant select on promessa to anon'],
     ['rls_ligada', 'rls desligada em promessa', 'alter table promessa disable row level security'],
   ];
-  it.each(mutacoes)('%s vira false com: %s', async (coluna, _desc, sql) => {
-    const b = await criarBanco(MIGRACOES, null);
+  // GRANT/REVOKE/ALTER sao transacionais no Postgres: cada mutacao roda numa transacao que e desfeita.
+  const DESFAZER = new Error('desfazer');
+  async function comMutacao(b: Banco, sql: string): Promise<Record<string, boolean>> {
+    let linha: Record<string, boolean> | undefined;
     try {
-      await b.dono(sql);
-      const [l] = await b.dono<Record<string, boolean>>(conferir0003);
-      expect(l[coluna]).toBe(false);
-      expect(Object.entries(l).filter(([k, v]) => v !== true && k !== coluna)).toEqual([]);
-    } finally {
-      await b.fechar();
+      await b.db.transaction(async (tx) => {
+        await tx.exec(sql);
+        linha = (await tx.query<Record<string, boolean>>(conferir0003)).rows[0];
+        throw DESFAZER;
+      });
+    } catch (e) {
+      if (e !== DESFAZER) throw e;
     }
-  }, 60_000);
+    return linha!;
+  }
+
+  it.each(mutacoes)('%s vira false com: %s', async (coluna, _desc, sql) => {
+    const l = await comMutacao(completo, sql);
+    expect(l[coluna]).toBe(false);
+    expect(Object.entries(l).filter(([k, v]) => v !== true && k !== coluna)).toEqual([]);
+  });
+
+  it('as mutacoes foram desfeitas: o banco continua todo true', async () => {
+    const [l] = await completo.dono<Record<string, boolean>>(conferir0003);
+    expect(Object.entries(l).filter(([, v]) => v !== true)).toEqual([]);
+  });
 });

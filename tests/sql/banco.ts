@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const PASTA = path.resolve(import.meta.dirname, '..', '..', 'supabase', 'migrations');
@@ -46,12 +47,37 @@ export interface Banco {
   fechar(): Promise<void>;
 }
 
-export async function criarBanco(migracoes: string[] = MIGRACOES, hoje: string | null = HOJE_TESTE): Promise<Banco> {
+// O initdb do PGlite domina o custo (~4 s). Por isso a base pronta (stubs + migracoes) e gravada uma vez em
+// disco (dumpDataDir) e cada banco novo nasce de loadDataDir (~0,6 s). A chave do cache inclui o conteudo das
+// migracoes e dos stubs, entao editar uma migracao invalida o cache sozinho.
+const CACHE = path.resolve(import.meta.dirname, '..', '..', 'node_modules', '.cache', 'pglite-base');
+
+function chaveBase(migracoes: string[]): string {
+  const h = createHash('sha256');
+  h.update(SUPABASE);
+  for (const m of migracoes) h.update(m).update(readFileSync(path.join(PASTA, m)));
+  return h.digest('hex').slice(0, 16);
+}
+
+/** Grava (se ainda nao existir) e devolve o caminho do dump da base com estas migracoes. */
+export async function prepararBase(migracoes: string[]): Promise<string> {
+  const arquivo = path.join(CACHE, `${chaveBase(migracoes)}.tar`);
+  if (existsSync(arquivo)) return arquivo;
   const db = await PGlite.create();
   await db.exec(SUPABASE);
-  for (const m of migracoes) {
-    await db.exec(readFileSync(path.join(PASTA, m), 'utf8'));
-  }
+  for (const m of migracoes) await db.exec(readFileSync(path.join(PASTA, m), 'utf8'));
+  const dump = await db.dumpDataDir('none');
+  await db.close();
+  mkdirSync(CACHE, { recursive: true });
+  const tmp = `${arquivo}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, Buffer.from(await dump.arrayBuffer()));
+  renameSync(tmp, arquivo); // atomico: processos concorrentes nunca leem arquivo pela metade
+  return arquivo;
+}
+
+export async function criarBanco(migracoes: string[] = MIGRACOES, hoje: string | null = HOJE_TESTE): Promise<Banco> {
+  const arquivo = await prepararBase(migracoes);
+  const db = await PGlite.create({ loadDataDir: new Blob([readFileSync(arquivo)]) });
   if (hoje !== null && migracoes.includes('0003_promessas.sql')) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(hoje)) throw new Error('hoje deve ser aaaa-mm-dd');
     await db.exec(`create or replace function hoje_sp() returns date
