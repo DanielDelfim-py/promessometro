@@ -20,7 +20,10 @@ create role service_role nologin noinherit bypassrls;
 create schema auth;
 create table auth.users (id uuid primary key);
 create function auth.uid() returns uuid language sql stable as $$
-  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
+  select coalesce(
+    nullif(current_setting('request.jwt.claim.sub', true), ''),
+    nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+  )::uuid;
 $$;
 grant usage on schema auth to anon, authenticated, service_role;
 grant execute on function auth.uid() to anon, authenticated, service_role;
@@ -61,7 +64,9 @@ export async function criarBanco(migracoes: string[] = MIGRACOES, hoje: string |
     },
     async como<T>(papel: Papel, sub: string | null, sql: string, params: unknown[] = []) {
       return db.transaction(async (tx) => {
+        // Os dois caminhos que o Supabase usa: claim legado e JSON completo.
         await tx.query(`select set_config('request.jwt.claim.sub', $1, true)`, [sub ?? '']);
+        await tx.query(`select set_config('request.jwt.claims', $1, true)`, [sub ? JSON.stringify({ sub, role: papel }) : '']);
         await tx.exec(`set local role ${papel}`);
         return (await tx.query<T>(sql, params)).rows;
       });
