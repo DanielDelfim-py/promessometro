@@ -789,3 +789,338 @@ grant execute on function reabrir_candidata(uuid) to authenticated;
 grant execute on function editar_promessa(uuid, text, uuid, text) to authenticated;
 grant execute on function publicar_promessa(uuid, text) to authenticated;
 grant execute on function retirar_promessa(uuid, text) to authenticated;
+
+-- =====================================================================
+-- PARTE C: evidencias, decisao de status, propostas e vinculos (telas no Plano 2B)
+-- =====================================================================
+
+create or replace function registrar_evidencia(
+  p_promessa_id uuid,
+  p_tipo tipo_evidencia,
+  p_fonte_url text,
+  p_descricao text,
+  p_data_fato date,
+  p_ato_id uuid default null
+) returns uuid
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_estado estado_publicacao;
+  v_desc text := btrim(coalesce(p_descricao, ''));
+  v_url text := nullif(btrim(coalesce(p_fonte_url, '')), '');
+  v_data date := p_data_fato;
+  v_ato ato%rowtype;
+  v_id uuid;
+begin
+  if not is_editor() then
+    raise exception 'sem permissao' using errcode = '42501';
+  end if;
+
+  perform set_config('app.revisando', 'on', true);
+
+  select estado into v_estado from promessa where id = p_promessa_id for update;
+  if not found then
+    raise exception 'promessa nao encontrada';
+  end if;
+  if v_estado <> 'publicada' then
+    raise exception 'promessa nao publicada';
+  end if;
+  if p_tipo is null then
+    raise exception 'tipo de evidencia obrigatorio';
+  end if;
+  if v_desc = '' then
+    raise exception 'descricao obrigatoria';
+  end if;
+  if length(v_desc) > 500 then
+    raise exception 'descricao acima do limite';
+  end if;
+
+  if p_tipo = 'ato_dou' then
+    select * into v_ato from ato where id = p_ato_id;
+    if not found then
+      raise exception 'ato nao encontrado';
+    end if;
+    v_url := coalesce(v_url, v_ato.url_dou);
+    v_data := coalesce(v_data, v_ato.data_dou);
+    if exists (select 1 from evidencia where promessa_id = p_promessa_id and ato_id = p_ato_id and retirada_em is null) then
+      raise exception 'evidencia ja registrada';
+    end if;
+  elsif p_ato_id is not null then
+    raise exception 'ato so vale para evidencia do tipo ato_dou';
+  end if;
+
+  if v_url is null or v_url !~ '^https://' then
+    raise exception 'fonte deve ser https';
+  end if;
+  if v_data is null or v_data < date '2027-01-01' then
+    raise exception 'data do fato anterior a 2027-01-01';
+  end if;
+  if v_data > hoje_sp() then
+    raise exception 'data do fato no futuro';
+  end if;
+
+  insert into evidencia (promessa_id, tipo, ato_id, fonte_url, descricao, data_fato, criado_por)
+  values (p_promessa_id, p_tipo, case when p_tipo = 'ato_dou' then p_ato_id end, v_url, v_desc, v_data, auth.uid())
+  returning id into v_id;
+
+  if p_tipo = 'ato_dou' then
+    insert into vinculo_ato_promessa (ato_id, promessa_id, origem, estado, justificativa, decidido_por, decidido_em)
+    values (p_ato_id, p_promessa_id, 'editor', 'confirmado', v_desc, auth.uid(), now())
+    on conflict (ato_id, promessa_id) do update
+      set estado = 'confirmado', decidido_por = excluded.decidido_por, decidido_em = excluded.decidido_em;
+  end if;
+
+  return v_id;
+end;
+$$;
+
+-- Retratacao: a evidencia sai do site e das decisoes, mas fica gravada com quem, quando e por que.
+-- Se veio de um ato, o vinculo volta a 'rejeitado'. O status NAO muda sozinho: o editor decide depois.
+create or replace function retirar_evidencia(p_evidencia_id uuid, p_nota text)
+returns void
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_ev evidencia%rowtype;
+  v_promessa promessa%rowtype;
+  v_nota text := nullif(btrim(coalesce(p_nota, '')), '');
+begin
+  if not is_editor() then
+    raise exception 'sem permissao' using errcode = '42501';
+  end if;
+
+  perform set_config('app.revisando', 'on', true);
+
+  select * into v_ev from evidencia where id = p_evidencia_id for update;
+  if not found then
+    raise exception 'evidencia nao encontrada';
+  end if;
+  if v_ev.retirada_em is not null then
+    raise exception 'evidencia ja retirada';
+  end if;
+  if v_nota is null then
+    raise exception 'nota e obrigatoria para retirar evidencia';
+  end if;
+  if length(v_nota) > 500 then
+    raise exception 'nota acima do limite';
+  end if;
+  select * into v_promessa from promessa where id = v_ev.promessa_id for update;
+
+  update evidencia
+     set retirada_em = now(), retirada_por = auth.uid(), retirada_nota = v_nota
+   where id = p_evidencia_id;
+
+  if v_ev.ato_id is not null then
+    update vinculo_ato_promessa
+       set estado = 'rejeitado', decidido_por = auth.uid(), decidido_em = now()
+     where ato_id = v_ev.ato_id and promessa_id = v_ev.promessa_id;
+  end if;
+
+  insert into revisao_promessa (promessa_id, editor_id, decisao, status_antes, status_depois, nota, valores_antes, valores_depois)
+  values (
+    v_ev.promessa_id, auth.uid(), 'retirou_evidencia', v_promessa.status, v_promessa.status, v_nota,
+    jsonb_build_object('evidencia', to_jsonb(v_ev)),
+    jsonb_build_object('evidencia', (select to_jsonb(e) from evidencia e where e.id = p_evidencia_id))
+  );
+end;
+$$;
+
+create or replace function decidir_status(
+  p_promessa_id uuid,
+  p_status status_promessa,
+  p_evidencia_ids uuid[],
+  p_nota text,
+  p_confirmou_fonte boolean default false,
+  p_proposta_id uuid default null
+) returns void
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_antes promessa%rowtype;
+  v_nota text := nullif(btrim(coalesce(p_nota, '')), '');
+  v_ids uuid[] := coalesce(p_evidencia_ids, '{}');
+  v_pedidas integer;
+  v_validas integer;
+  v_prop proposta_status%rowtype;
+begin
+  if not is_editor() then
+    raise exception 'sem permissao' using errcode = '42501';
+  end if;
+
+  perform set_config('app.revisando', 'on', true);
+
+  select * into v_antes from promessa where id = p_promessa_id for update;
+  if not found then
+    raise exception 'promessa nao encontrada';
+  end if;
+  if v_antes.estado <> 'publicada' then
+    raise exception 'promessa nao publicada';
+  end if;
+  if p_status is null or p_status = v_antes.status then
+    raise exception 'status igual ao atual';
+  end if;
+  if v_nota is null then
+    raise exception 'nota e obrigatoria para mudar status';
+  end if;
+  if length(v_nota) > 1000 then
+    raise exception 'nota acima do limite';
+  end if;
+
+  -- Toda mudanca exige evidencia ativa, exceto a correcao de volta a nao_iniciada (so com nota).
+  if cardinality(v_ids) = 0 and p_status <> 'nao_iniciada' then
+    raise exception 'evidencia obrigatoria';
+  end if;
+  if cardinality(v_ids) > 0 then
+    if array_position(v_ids, null) is not null then
+      raise exception 'evidencia invalida';
+    end if;
+    select count(distinct x) into v_pedidas from unnest(v_ids) as x;
+    select count(*) into v_validas from evidencia e
+     where e.id = any(v_ids) and e.promessa_id = p_promessa_id and e.retirada_em is null
+       and e.fonte_url ~ '^https://' and e.data_fato >= date '2027-01-01';
+    if v_validas <> v_pedidas then
+      raise exception 'evidencia invalida';
+    end if;
+  end if;
+
+  if p_status in ('cumprida', 'abandonada') and p_confirmou_fonte is not true then
+    raise exception 'confirmacao de fonte obrigatoria';
+  end if;
+
+  if p_proposta_id is not null then
+    select * into v_prop from proposta_status where id = p_proposta_id for update;
+    if not found or v_prop.promessa_id <> p_promessa_id or v_prop.estado <> 'pendente' then
+      raise exception 'proposta invalida';
+    end if;
+  end if;
+
+  update promessa set status = p_status, status_atualizado_em = now() where id = p_promessa_id;
+
+  -- A proposta usada conta como aprovada so se o editor escolheu o mesmo status; senao, recusada.
+  if p_proposta_id is not null then
+    update proposta_status
+       set estado = case when p_status = v_prop.status_proposto then 'aprovada'::estado_proposta else 'recusada'::estado_proposta end,
+           decidido_por = auth.uid(), decidido_em = now(), nota_decisao = v_nota
+     where id = p_proposta_id;
+  end if;
+  -- Qualquer outra proposta ainda pendente perdeu o objeto.
+  update proposta_status
+     set estado = 'substituida', decidido_por = auth.uid(), decidido_em = now()
+   where promessa_id = p_promessa_id and estado = 'pendente';
+
+  insert into revisao_promessa (
+    promessa_id, editor_id, decisao, status_antes, status_depois, proposta_id, confirmou_fonte, nota, valores_antes, valores_depois
+  ) values (
+    p_promessa_id, auth.uid(), 'mudou_status', v_antes.status, p_status, p_proposta_id, coalesce(p_confirmou_fonte, false), v_nota,
+    to_jsonb(v_antes),
+    (select to_jsonb(p) from promessa p where p.id = p_promessa_id) || jsonb_build_object('evidencia_ids', to_jsonb(v_ids))
+  );
+end;
+$$;
+
+create or replace function recusar_proposta(p_proposta_id uuid, p_nota text)
+returns void
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_prop proposta_status%rowtype;
+  v_nota text := nullif(btrim(coalesce(p_nota, '')), '');
+begin
+  if not is_editor() then
+    raise exception 'sem permissao' using errcode = '42501';
+  end if;
+
+  perform set_config('app.revisando', 'on', true);
+
+  select * into v_prop from proposta_status where id = p_proposta_id for update;
+  if not found or v_prop.estado <> 'pendente' then
+    raise exception 'proposta invalida';
+  end if;
+  if v_nota is null then
+    raise exception 'nota e obrigatoria para recusar';
+  end if;
+  if length(v_nota) > 1000 then
+    raise exception 'nota acima do limite';
+  end if;
+
+  update proposta_status
+     set estado = 'recusada', decidido_por = auth.uid(), decidido_em = now(), nota_decisao = v_nota
+   where id = p_proposta_id;
+end;
+$$;
+
+-- Confirmar exige a descricao escrita pelo editor: a justificativa da IA nunca vira texto publico.
+create or replace function confirmar_vinculo(p_vinculo_id uuid, p_confirmar boolean, p_descricao text default null)
+returns uuid
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_v vinculo_ato_promessa%rowtype;
+  v_estado estado_publicacao;
+  v_ato ato%rowtype;
+  v_desc text := nullif(btrim(coalesce(p_descricao, '')), '');
+  v_id uuid;
+begin
+  if not is_editor() then
+    raise exception 'sem permissao' using errcode = '42501';
+  end if;
+
+  perform set_config('app.revisando', 'on', true);
+
+  if p_confirmar is null then
+    raise exception 'decisao do vinculo obrigatoria';
+  end if;
+
+  select * into v_v from vinculo_ato_promessa where id = p_vinculo_id for update;
+  if not found then
+    raise exception 'vinculo nao encontrado';
+  end if;
+  if v_v.estado <> 'sugerido' then
+    raise exception 'vinculo ja decidido';
+  end if;
+
+  if not p_confirmar then
+    update vinculo_ato_promessa
+       set estado = 'rejeitado', decidido_por = auth.uid(), decidido_em = now()
+     where id = p_vinculo_id;
+    return null;
+  end if;
+
+  if v_desc is null then
+    raise exception 'descricao obrigatoria';
+  end if;
+  if length(v_desc) > 500 then
+    raise exception 'descricao acima do limite';
+  end if;
+  select estado into v_estado from promessa where id = v_v.promessa_id for update;
+  if v_estado is distinct from 'publicada' then
+    raise exception 'promessa nao publicada';
+  end if;
+  select * into v_ato from ato where id = v_v.ato_id;
+  if v_ato.data_dou < date '2027-01-01' then
+    raise exception 'data do fato anterior a 2027-01-01';
+  end if;
+  if v_ato.data_dou > hoje_sp() then
+    raise exception 'data do fato no futuro';
+  end if;
+
+  update vinculo_ato_promessa
+     set estado = 'confirmado', decidido_por = auth.uid(), decidido_em = now()
+   where id = p_vinculo_id;
+
+  select id into v_id from evidencia
+   where promessa_id = v_v.promessa_id and ato_id = v_v.ato_id and retirada_em is null;
+  if v_id is null then
+    insert into evidencia (promessa_id, tipo, ato_id, fonte_url, descricao, data_fato, criado_por)
+    values (v_v.promessa_id, 'ato_dou', v_ato.id, v_ato.url_dou, v_desc, v_ato.data_dou, auth.uid())
+    returning id into v_id;
+  end if;
+  return v_id;
+end;
+$$;
+
+revoke execute on function registrar_evidencia(uuid, tipo_evidencia, text, text, date, uuid) from public, anon, service_role;
+revoke execute on function retirar_evidencia(uuid, text) from public, anon, service_role;
+revoke execute on function decidir_status(uuid, status_promessa, uuid[], text, boolean, uuid) from public, anon, service_role;
+revoke execute on function recusar_proposta(uuid, text) from public, anon, service_role;
+revoke execute on function confirmar_vinculo(uuid, boolean, text) from public, anon, service_role;
+grant execute on function registrar_evidencia(uuid, tipo_evidencia, text, text, date, uuid) to authenticated;
+grant execute on function retirar_evidencia(uuid, text) to authenticated;
+grant execute on function decidir_status(uuid, status_promessa, uuid[], text, boolean, uuid) to authenticated;
+grant execute on function recusar_proposta(uuid, text) to authenticated;
+grant execute on function confirmar_vinculo(uuid, boolean, text) to authenticated;
