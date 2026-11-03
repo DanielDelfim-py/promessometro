@@ -209,13 +209,11 @@ revoke all on plano, plano_pagina, promessa_candidata, promessa, evidencia, vinc
 -- Editor: so leitura; toda escrita passa pelas funcoes SECURITY DEFINER.
 grant select on plano, plano_pagina, promessa_candidata, promessa, evidencia, vinculo_ato_promessa, proposta_status, revisao_promessa
   to authenticated;
--- service_role: importacao do plano (so pela funcao importar_plano, que roda com os privilegios dela e
--- grava tudo numa transacao), IA de vinculos e propostas (le promessa/evidencia; insere sugestao e proposta
--- pendente). Nada em revisao_promessa; sem update nem delete em nenhuma tabela nova; sem insert em promessa
--- e evidencia.
-grant select, insert on plano to service_role;
-grant select, insert on plano_pagina to service_role;
-grant select, insert on promessa_candidata to service_role;
+-- service_role: o plano so e gravado pela funcao importar_plano (SECURITY DEFINER, tudo numa transacao);
+-- aqui so le (o script confere se o arquivo ja foi importado). IA de vinculos e propostas (le
+-- promessa/evidencia; insere sugestao e proposta pendente). Nada em revisao_promessa; sem update nem delete
+-- em nenhuma tabela nova; sem insert em plano, plano_pagina, promessa_candidata, promessa e evidencia.
+grant select on plano, plano_pagina, promessa_candidata to service_role;
 grant select on promessa to service_role;
 grant select on evidencia to service_role;
 grant select, insert on vinculo_ato_promessa to service_role;
@@ -467,11 +465,13 @@ revoke execute on function bloquear_alteracao_promessometro(), exigir_funcao_edi
 -- A7) Importacao atomica do plano (so service_role).
 -- importar_plano: grava plano + todas as paginas + todas as candidatas numa unica transacao.
 -- Se qualquer parte falhar, nada fica gravado (nao existe "importacao pela metade" a desfazer).
--- Roda com os privilegios de quem chama (service_role): os gatilhos acima continuam valendo.
+-- SECURITY DEFINER: e o UNICO caminho de escrita do service_role nestas tres tabelas (ele nao tem insert
+-- direto, entao nao ha plano pela metade nem candidata acrescentada depois). Os gatilhos de guarda continuam
+-- valendo (a flag app.revisando fica desligada, logo candidata nova deve estar pendente). Execute so service_role.
 -- Carga tipica: 84 paginas, cerca de 170 mil caracteres, bem abaixo dos limites da API.
 create or replace function importar_plano(p_plano jsonb, p_paginas jsonb, p_candidatas jsonb)
 returns jsonb
-language plpgsql security invoker set search_path = public, pg_temp as $$
+language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_id uuid;
   v_paginas integer;
@@ -483,34 +483,51 @@ begin
      or jsonb_typeof(p_candidatas) is distinct from 'array' then
     raise exception 'importacao invalida: formato';
   end if;
-  v_paginas := (p_plano->>'paginas')::integer;
-  v_n_paginas := jsonb_array_length(p_paginas);
-  if v_paginas is null or v_n_paginas <> v_paginas then
-    raise exception 'importacao invalida: numero de paginas';
+  -- Tipos conferidos ANTES de qualquer conversao, para a mensagem ser a estavel e nao um 22P02 cru.
+  if jsonb_typeof(p_plano->'paginas') is distinct from 'number'
+     or jsonb_typeof(p_plano->'ano_eleicao') is distinct from 'number'
+     or exists (select 1 from jsonb_array_elements(p_paginas) e where jsonb_typeof(e) is distinct from 'string')
+     or exists (select 1 from jsonb_array_elements(p_candidatas) c
+                 where jsonb_typeof(c) is distinct from 'object' or jsonb_typeof(c->'pagina') is distinct from 'number') then
+    raise exception 'importacao invalida: formato';
   end if;
-  if exists (select 1 from plano where arquivo_sha256 = p_plano->>'arquivo_sha256') then
-    raise exception 'plano ja importado';
-  end if;
+  begin
+    v_paginas := (p_plano->>'paginas')::integer;
+    v_n_paginas := jsonb_array_length(p_paginas);
+    if v_paginas is null or v_n_paginas <> v_paginas then
+      raise exception 'importacao invalida: numero de paginas';
+    end if;
+    if exists (select 1 from plano where arquivo_sha256 = p_plano->>'arquivo_sha256') then
+      raise exception 'plano ja importado';
+    end if;
 
-  insert into plano (titulo, candidato, cargo, ano_eleicao, fonte_url, arquivo_sha256, paginas)
-  values (
-    p_plano->>'titulo', p_plano->>'candidato', p_plano->>'cargo', (p_plano->>'ano_eleicao')::smallint,
-    p_plano->>'fonte_url', p_plano->>'arquivo_sha256', v_paginas
-  )
-  returning id into v_id;
+    insert into plano (titulo, candidato, cargo, ano_eleicao, fonte_url, arquivo_sha256, paginas)
+    values (
+      p_plano->>'titulo', p_plano->>'candidato', p_plano->>'cargo', (p_plano->>'ano_eleicao')::smallint,
+      p_plano->>'fonte_url', p_plano->>'arquivo_sha256', v_paginas
+    )
+    returning id into v_id;
 
-  insert into plano_pagina (plano_id, numero, texto)
-  select v_id, t.n::integer, t.texto
-    from jsonb_array_elements_text(p_paginas) with ordinality as t(texto, n);
+    insert into plano_pagina (plano_id, numero, texto)
+    select v_id, t.n::integer, t.texto
+      from jsonb_array_elements_text(p_paginas) with ordinality as t(texto, n);
 
-  -- Candidata de pagina inexistente ou com citacao que nao esta na pagina: o gatilho guardar_candidata recusa
-  -- e a transacao inteira e desfeita.
-  insert into promessa_candidata (plano_id, pagina, citacao, titulo_sugerido, tema_sugerido, concretude, motivo_concretude, modelo, versao_prompt)
-  select v_id, (c->>'pagina')::integer, c->>'citacao', c->>'titulo_sugerido', c->>'tema_sugerido',
-         coalesce((c->>'concretude')::concretude_promessa, 'intermediaria'), c->>'motivo_concretude',
-         c->>'modelo', c->>'versao_prompt'
-    from jsonb_array_elements(p_candidatas) as c;
-  get diagnostics v_n_candidatas = row_count;
+    -- Candidata de pagina inexistente ou com citacao que nao esta na pagina: o gatilho guardar_candidata recusa
+    -- e a transacao inteira e desfeita.
+    insert into promessa_candidata (plano_id, pagina, citacao, titulo_sugerido, tema_sugerido, concretude, motivo_concretude, modelo, versao_prompt)
+    select v_id, (c->>'pagina')::integer, c->>'citacao', c->>'titulo_sugerido', c->>'tema_sugerido',
+           coalesce((c->>'concretude')::concretude_promessa, 'intermediaria'), c->>'motivo_concretude',
+           c->>'modelo', c->>'versao_prompt'
+      from jsonb_array_elements(p_candidatas) as c;
+    get diagnostics v_n_candidatas = row_count;
+  exception
+    -- importacao simultanea do mesmo arquivo: a chave unica do sha256 decide, com a mesma mensagem estavel.
+    when unique_violation then
+      raise exception 'plano ja importado';
+    -- numero fora da faixa, enum invalido, campo obrigatorio ausente.
+    when invalid_text_representation or numeric_value_out_of_range or not_null_violation then
+      raise exception 'importacao invalida: formato';
+  end;
 
   return jsonb_build_object('plano_id', v_id, 'paginas', v_n_paginas, 'candidatas', v_n_candidatas);
 end;
