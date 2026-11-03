@@ -13,6 +13,16 @@ function detalheErro(erro: { code?: string; message?: string } | null): string {
   return erro ? `${erro.code} ${erro.message}` : 'sem erro';
 }
 
+type ErroApi = { code?: string; message?: string } | null;
+/** Exige o SQLSTATE E um trecho da mensagem (sem o trecho, qualquer erro com o mesmo codigo passaria). */
+function erroIgual(erro: ErroApi, code: string, trecho: RegExp): boolean {
+  return erro?.code === code && trecho.test(erro.message ?? '');
+}
+/** Privilegio negado: 42501 "permission denied for table|function ...". */
+function negado(erro: ErroApi, tipo: 'table' | 'function' = 'table'): boolean {
+  return erroIgual(erro, '42501', new RegExp(`^permission denied for ${tipo} `));
+}
+
 // Negado = Postgres "permission denied" (42501). Sem essa checagem, um erro qualquer passaria.
 const ato = await anon.from('ato').select('id').limit(1);
 conferir('anon nao le ato', ato.error?.code === '42501', detalheErro(ato.error));
@@ -57,6 +67,57 @@ const rpc = await anon.rpc('revisar_ato', {
   p_tema_id: '00000000-0000-0000-0000-000000000000',
 });
 conferir('anon nao executa revisar_ato', rpc.error?.code === '42501', detalheErro(rpc.error));
+
+// Fase 2 (0003): o publico nao le nenhuma tabela nova; le as visoes.
+const COLUNA_TESTE: Record<string, string> = {
+  plano: 'id',
+  plano_pagina: 'plano_id',
+  promessa_candidata: 'id',
+  promessa: 'id',
+  evidencia: 'id',
+  vinculo_ato_promessa: 'id',
+  proposta_status: 'id',
+  revisao_promessa: 'id',
+};
+for (const [tabela, coluna] of Object.entries(COLUNA_TESTE)) {
+  const r = await anon.from(tabela).select(coluna).limit(1);
+  conferir(`anon nao le ${tabela}`, negado(r.error), detalheErro(r.error));
+}
+
+for (const visao of ['promessa_publica', 'historico_status_publico', 'evidencia_publica']) {
+  const r = await anon.from(visao).select('id').limit(1);
+  conferir(`anon le ${visao}`, !r.error, detalheErro(r.error));
+}
+
+const estadoInterno = await anon.from('promessa_publica').select('estado').limit(1);
+conferir(
+  'promessa_publica nao expoe estado',
+  erroIgual(estadoInterno.error, '42703', /column .*estado.* does not exist/),
+  detalheErro(estadoInterno.error),
+);
+
+const nPromessas = await anon.from('ato_publico').select('id, n_promessas').limit(1);
+conferir('ato_publico tem n_promessas', !nPromessas.error, detalheErro(nPromessas.error));
+
+const UUID_ZERO = '00000000-0000-0000-0000-000000000000';
+const RPCS_PROTEGIDAS: [string, Record<string, unknown>][] = [
+  ['aceitar_candidata', { p_candidata_id: UUID_ZERO, p_titulo: 'x', p_tema_id: UUID_ZERO }],
+  ['descartar_candidata', { p_candidata_id: UUID_ZERO }],
+  ['reabrir_candidata', { p_candidata_id: UUID_ZERO }],
+  ['editar_promessa', { p_promessa_id: UUID_ZERO, p_titulo: 'x', p_tema_id: UUID_ZERO, p_nota: 'x' }],
+  ['publicar_promessa', { p_promessa_id: UUID_ZERO, p_nota: null }],
+  ['retirar_promessa', { p_promessa_id: UUID_ZERO, p_nota: 'x' }],
+  ['registrar_evidencia', { p_promessa_id: UUID_ZERO, p_tipo: 'documento', p_fonte_url: 'https://x', p_descricao: 'x', p_data_fato: '2027-01-01', p_ato_id: null }],
+  ['retirar_evidencia', { p_evidencia_id: UUID_ZERO, p_nota: 'x' }],
+  ['decidir_status', { p_promessa_id: UUID_ZERO, p_status: 'cumprida', p_evidencia_ids: [UUID_ZERO], p_nota: 'x', p_confirmou_fonte: true, p_proposta_id: null }],
+  ['recusar_proposta', { p_proposta_id: UUID_ZERO, p_nota: 'x' }],
+  ['confirmar_vinculo', { p_vinculo_id: UUID_ZERO, p_confirmar: true, p_descricao: 'x' }],
+  ['importar_plano', { p_plano: {}, p_paginas: [], p_candidatas: [] }],
+];
+for (const [nome, args] of RPCS_PROTEGIDAS) {
+  const r = await anon.rpc(nome, args);
+  conferir(`anon nao executa ${nome}`, negado(r.error, 'function'), detalheErro(r.error));
+}
 
 // Bloco opcional: privilegio minimo de service_role (so roda com SUPABASE_SECRET_KEY).
 // Todas as operacoes abaixo DEVEM falhar com 42501 e nao deixar dados.
@@ -114,6 +175,128 @@ if (chaveSecreta) {
 
   const updOrgao = await svc.from('ato').update({ orgao: 'x' }).eq('id', ZERO);
   conferir('service_role nao altera colunas de ato alem de status', updOrgao.error?.code === '42501', detalheErro(updOrgao.error));
+
+  // Fase 2 (0003): todas DEVEM falhar e nao deixar dados. Cada uma confere SQLSTATE e mensagem.
+  const updStatus = await svc.from('promessa').update({ status: 'cumprida' }).eq('id', ZERO);
+  conferir('service_role nao altera promessa.status', negado(updStatus.error), detalheErro(updStatus.error));
+
+  const updEstado = await svc.from('promessa').update({ estado: 'publicada' }).eq('id', ZERO);
+  conferir('service_role nao altera promessa.estado', negado(updEstado.error), detalheErro(updEstado.error));
+
+  const insProm = await svc.from('promessa').insert({
+    plano_id: ZERO,
+    tema_id: ZERO,
+    titulo: 'x',
+    texto_original: 'x',
+    pagina: 1,
+    fonte_url: 'https://x',
+  });
+  conferir('service_role nao insere promessa', negado(insProm.error), detalheErro(insProm.error));
+
+  const delPlano = await svc.from('plano').delete().eq('id', ZERO);
+  conferir('service_role nao apaga plano', negado(delPlano.error), detalheErro(delPlano.error));
+
+  // O plano so entra por importar_plano: insert direto em plano, plano_pagina e promessa_candidata e negado.
+  const insPlano = await svc.from('plano').insert({
+    titulo: 'x',
+    candidato: 'x',
+    cargo: 'x',
+    ano_eleicao: 2026,
+    fonte_url: 'https://x',
+    arquivo_sha256: '0'.repeat(64),
+    paginas: 1,
+  });
+  conferir('service_role nao insere plano direto', negado(insPlano.error), detalheErro(insPlano.error));
+
+  const insPagina = await svc.from('plano_pagina').insert({ plano_id: ZERO, numero: 1, texto: 'x' });
+  conferir('service_role nao insere plano_pagina direto', negado(insPagina.error), detalheErro(insPagina.error));
+
+  const insCand = await svc.from('promessa_candidata').insert({
+    plano_id: ZERO,
+    pagina: 1,
+    citacao: 'x'.repeat(30),
+    titulo_sugerido: 'x',
+    tema_sugerido: 'outros',
+    modelo: 'x',
+    versao_prompt: 'x',
+  });
+  conferir('service_role nao insere candidata direto', negado(insCand.error), detalheErro(insCand.error));
+
+  // importar_plano E permitida, mas com carga invalida recusa antes de gravar qualquer coisa.
+  const impVazia = await svc.rpc('importar_plano', { p_plano: {}, p_paginas: [], p_candidatas: [] });
+  conferir(
+    'service_role executa importar_plano (carga invalida e recusada)',
+    erroIgual(impVazia.error, 'P0001', /^importacao invalida: formato$/),
+    detalheErro(impVazia.error),
+  );
+
+  const lerRevP = await svc.from('revisao_promessa').select('id').limit(1);
+  conferir('service_role nao le revisao_promessa', negado(lerRevP.error), detalheErro(lerRevP.error));
+
+  const insRevP = await svc.from('revisao_promessa').insert({
+    promessa_id: ZERO,
+    editor_id: ZERO,
+    decisao: 'mudou_status',
+    status_antes: 'nao_iniciada',
+    status_depois: 'cumprida',
+    valores_antes: {},
+    valores_depois: {},
+  });
+  conferir('service_role nao insere revisao_promessa', negado(insRevP.error), detalheErro(insRevP.error));
+
+  const insEv = await svc.from('evidencia').insert({
+    promessa_id: ZERO,
+    tipo: 'documento',
+    fonte_url: 'https://x',
+    descricao: 'x',
+    data_fato: '2027-01-01',
+    criado_por: ZERO,
+  });
+  conferir('service_role nao insere evidencia', negado(insEv.error), detalheErro(insEv.error));
+
+  // service_role pode inserir sugestao e proposta pendente; qualquer outra coisa o gatilho recusa (42501).
+  const insVinc = await svc.from('vinculo_ato_promessa').insert({
+    ato_id: ZERO,
+    promessa_id: ZERO,
+    origem: 'ia',
+    estado: 'confirmado',
+    justificativa: 'x',
+    modelo: 'x',
+    versao_prompt: 'x',
+  });
+  conferir(
+    'service_role nao insere vinculo confirmado',
+    erroIgual(insVinc.error, '42501', /vinculo novo deve ser sugestao pendente da ia/),
+    detalheErro(insVinc.error),
+  );
+
+  const insProp = await svc.from('proposta_status').insert({
+    promessa_id: ZERO,
+    status_proposto: 'cumprida',
+    justificativa: 'x',
+    evidencia_ids: [ZERO],
+    modelo: 'x',
+    versao_prompt: 'x',
+    estado: 'aprovada',
+  });
+  conferir(
+    'service_role nao insere proposta aprovada',
+    erroIgual(insProp.error, '42501', /proposta nova deve estar pendente/),
+    detalheErro(insProp.error),
+  );
+
+  const rpcPub = await svc.rpc('publicar_promessa', { p_promessa_id: ZERO, p_nota: null });
+  conferir('service_role nao executa publicar_promessa', negado(rpcPub.error, 'function'), detalheErro(rpcPub.error));
+
+  const rpcDec = await svc.rpc('decidir_status', {
+    p_promessa_id: ZERO,
+    p_status: 'cumprida',
+    p_evidencia_ids: [ZERO],
+    p_nota: 'x',
+    p_confirmou_fonte: true,
+    p_proposta_id: null,
+  });
+  conferir('service_role nao executa decidir_status', negado(rpcDec.error, 'function'), detalheErro(rpcDec.error));
 } else {
   console.log('PULOU verificacoes de service_role (defina SUPABASE_SECRET_KEY para rodar)');
 }
