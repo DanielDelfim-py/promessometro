@@ -220,3 +220,16 @@ export async function evidenciaDireta(b: Banco, promessaId: string, dataFato = '
   );
   return r.id;
 }
+
+/** Cria uma promessa pelo caminho real: importar_plano -> aceitar_candidata -> (opcional) publicar_promessa. */
+export async function criarPromessa(b: Banco, publicar = false): Promise<{ promessaId: string; planoId: string }> {
+  const { planoId, candidatas } = await semearPlano(b);
+  const tema = await temaId(b, 'educacao');
+  const [r] = await b.como<{ id: string }>('authenticated', EDITOR, 'select aceitar_candidata($1::uuid, $2, $3::uuid) as id', [
+    candidatas[0],
+    'Construir 500 creches',
+    tema,
+  ]);
+  if (publicar) await b.como('authenticated', EDITOR, 'select publicar_promessa($1::uuid, null)', [r.id]);
+  return { promessaId: r.id, planoId };
+}

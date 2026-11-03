@@ -534,3 +534,258 @@ end;
 $$;
 revoke execute on function importar_plano(jsonb, jsonb, jsonb) from public, anon, authenticated;
 grant execute on function importar_plano(jsonb, jsonb, jsonb) to service_role;
+
+-- =====================================================================
+-- PARTE B: funcoes do cadastro (editor autenticado)
+-- Padrao das funcoes do editor: is_editor() primeiro; flag app.revisando; linha alvo travada com for update;
+-- mensagens minusculas sem acento (src/lib/editorial/erros.ts depende delas).
+-- =====================================================================
+
+create or replace function aceitar_candidata(p_candidata_id uuid, p_titulo text, p_tema_id uuid)
+returns uuid
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_c promessa_candidata%rowtype;
+  v_titulo text := btrim(coalesce(p_titulo, ''));
+  v_fonte text;
+  v_id uuid;
+begin
+  if not is_editor() then
+    raise exception 'sem permissao' using errcode = '42501';
+  end if;
+
+  perform set_config('app.revisando', 'on', true);
+
+  select * into v_c from promessa_candidata where id = p_candidata_id for update;
+  if not found then
+    raise exception 'candidata nao encontrada';
+  end if;
+  if v_c.estado <> 'pendente' then
+    raise exception 'candidata ja decidida';
+  end if;
+  if v_titulo = '' or p_tema_id is null or not exists (select 1 from tema where id = p_tema_id) then
+    raise exception 'titulo e tema sao obrigatorios';
+  end if;
+  if length(v_titulo) > 140 then
+    raise exception 'titulo acima do limite';
+  end if;
+
+  select fonte_url into v_fonte from plano where id = v_c.plano_id;
+
+  insert into promessa (plano_id, tema_id, titulo, texto_original, pagina, fonte_url, status, estado)
+  values (v_c.plano_id, p_tema_id, v_titulo, v_c.citacao, v_c.pagina, v_fonte, 'nao_iniciada', 'rascunho')
+  returning id into v_id;
+
+  update promessa_candidata
+     set estado = 'aceita', promessa_id = v_id, decidido_por = auth.uid(), decidido_em = now()
+   where id = p_candidata_id;
+
+  return v_id;
+end;
+$$;
+
+create or replace function descartar_candidata(p_candidata_id uuid)
+returns void
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_c promessa_candidata%rowtype;
+begin
+  if not is_editor() then
+    raise exception 'sem permissao' using errcode = '42501';
+  end if;
+
+  perform set_config('app.revisando', 'on', true);
+
+  select * into v_c from promessa_candidata where id = p_candidata_id for update;
+  if not found then
+    raise exception 'candidata nao encontrada';
+  end if;
+  if v_c.estado <> 'pendente' then
+    raise exception 'candidata ja decidida';
+  end if;
+
+  update promessa_candidata
+     set estado = 'descartada', decidido_por = auth.uid(), decidido_em = now()
+   where id = p_candidata_id;
+end;
+$$;
+
+-- Desfaz um descarte: a candidata volta a pendente. Candidata aceita nao volta (ja virou promessa).
+create or replace function reabrir_candidata(p_candidata_id uuid)
+returns void
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_c promessa_candidata%rowtype;
+begin
+  if not is_editor() then
+    raise exception 'sem permissao' using errcode = '42501';
+  end if;
+
+  perform set_config('app.revisando', 'on', true);
+
+  select * into v_c from promessa_candidata where id = p_candidata_id for update;
+  if not found then
+    raise exception 'candidata nao encontrada';
+  end if;
+  if v_c.estado <> 'descartada' then
+    raise exception 'so e possivel reabrir candidata descartada';
+  end if;
+
+  update promessa_candidata
+     set estado = 'pendente', decidido_por = null, decidido_em = null
+   where id = p_candidata_id;
+end;
+$$;
+
+create or replace function editar_promessa(p_promessa_id uuid, p_titulo text, p_tema_id uuid, p_nota text default null)
+returns void
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_antes promessa%rowtype;
+  v_titulo text := btrim(coalesce(p_titulo, ''));
+  v_nota text := nullif(btrim(coalesce(p_nota, '')), '');
+begin
+  if not is_editor() then
+    raise exception 'sem permissao' using errcode = '42501';
+  end if;
+
+  perform set_config('app.revisando', 'on', true);
+
+  select * into v_antes from promessa where id = p_promessa_id for update;
+  if not found then
+    raise exception 'promessa nao encontrada';
+  end if;
+  if v_antes.estado = 'retirada' then
+    raise exception 'promessa retirada nao pode ser alterada';
+  end if;
+  if v_titulo = '' or p_tema_id is null or not exists (select 1 from tema where id = p_tema_id) then
+    raise exception 'titulo e tema sao obrigatorios';
+  end if;
+  if length(v_titulo) > 140 then
+    raise exception 'titulo acima do limite';
+  end if;
+  if v_nota is not null and length(v_nota) > 500 then
+    raise exception 'nota acima do limite';
+  end if;
+  if v_antes.estado = 'publicada' and v_nota is null then
+    raise exception 'nota e obrigatoria para alterar promessa publicada';
+  end if;
+  if v_titulo = v_antes.titulo and p_tema_id = v_antes.tema_id then
+    return;
+  end if;
+
+  -- Publicada: e uma correcao, que aparece no site ("Corrigido em ..."). Rascunho: sem nota publica.
+  update promessa
+     set titulo = v_titulo,
+         tema_id = p_tema_id,
+         correcao_nota = case when v_antes.estado = 'publicada' then v_nota else null end,
+         corrigido_em = case when v_antes.estado = 'publicada' then now() else null end
+   where id = p_promessa_id;
+
+  insert into revisao_promessa (promessa_id, editor_id, decisao, status_antes, status_depois, nota, valores_antes, valores_depois)
+  values (
+    p_promessa_id, auth.uid(), 'alterou_texto', v_antes.status, v_antes.status, v_nota,
+    to_jsonb(v_antes),
+    (select to_jsonb(p) from promessa p where p.id = p_promessa_id)
+  );
+end;
+$$;
+
+create or replace function publicar_promessa(p_promessa_id uuid, p_nota text default null)
+returns void
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_antes promessa%rowtype;
+  v_nota text := nullif(btrim(coalesce(p_nota, '')), '');
+begin
+  if not is_editor() then
+    raise exception 'sem permissao' using errcode = '42501';
+  end if;
+
+  perform set_config('app.revisando', 'on', true);
+
+  select * into v_antes from promessa where id = p_promessa_id for update;
+  if not found then
+    raise exception 'promessa nao encontrada';
+  end if;
+  if v_antes.estado = 'publicada' then
+    raise exception 'promessa ja publicada';
+  end if;
+  if v_nota is not null and length(v_nota) > 500 then
+    raise exception 'nota acima do limite';
+  end if;
+  -- ja esteve no ar antes (foi retirada): voltar exige nota.
+  if v_antes.publicada_em is not null and v_nota is null then
+    raise exception 'nota e obrigatoria para republicar';
+  end if;
+
+  -- Publicar (primeira vez ou de novo) nao e correcao: zera a nota de correcao.
+  update promessa
+     set estado = 'publicada', publicada_em = coalesce(publicada_em, now()),
+         correcao_nota = null, corrigido_em = null
+   where id = p_promessa_id;
+
+  insert into revisao_promessa (promessa_id, editor_id, decisao, status_antes, status_depois, nota, valores_antes, valores_depois)
+  values (
+    p_promessa_id, auth.uid(),
+    case when v_antes.publicada_em is null then 'publicou'::decisao_promessa else 'republicou'::decisao_promessa end,
+    v_antes.status, v_antes.status, v_nota,
+    to_jsonb(v_antes),
+    (select to_jsonb(p) from promessa p where p.id = p_promessa_id)
+  );
+end;
+$$;
+
+create or replace function retirar_promessa(p_promessa_id uuid, p_nota text)
+returns void
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_antes promessa%rowtype;
+  v_nota text := nullif(btrim(coalesce(p_nota, '')), '');
+begin
+  if not is_editor() then
+    raise exception 'sem permissao' using errcode = '42501';
+  end if;
+
+  perform set_config('app.revisando', 'on', true);
+
+  select * into v_antes from promessa where id = p_promessa_id for update;
+  if not found then
+    raise exception 'promessa nao encontrada';
+  end if;
+  if v_antes.estado = 'retirada' then
+    raise exception 'promessa ja retirada';
+  end if;
+  if v_nota is null then
+    raise exception 'nota e obrigatoria para retirar';
+  end if;
+  if length(v_nota) > 500 then
+    raise exception 'nota acima do limite';
+  end if;
+
+  -- Retirar nao e correcao: zera a nota de correcao (o motivo fica em revisao_promessa).
+  update promessa set estado = 'retirada', correcao_nota = null, corrigido_em = null where id = p_promessa_id;
+
+  insert into revisao_promessa (promessa_id, editor_id, decisao, status_antes, status_depois, nota, valores_antes, valores_depois)
+  values (
+    p_promessa_id, auth.uid(), 'retirou', v_antes.status, v_antes.status, v_nota,
+    to_jsonb(v_antes),
+    (select to_jsonb(p) from promessa p where p.id = p_promessa_id)
+  );
+end;
+$$;
+
+-- Privilegios: o Supabase da execute a anon/authenticated/service_role em funcoes novas; tiramos de todos
+-- e devolvemos so a authenticated (a funcao ainda confere is_editor()).
+revoke execute on function aceitar_candidata(uuid, text, uuid) from public, anon, service_role;
+revoke execute on function descartar_candidata(uuid) from public, anon, service_role;
+revoke execute on function reabrir_candidata(uuid) from public, anon, service_role;
+revoke execute on function editar_promessa(uuid, text, uuid, text) from public, anon, service_role;
+revoke execute on function publicar_promessa(uuid, text) from public, anon, service_role;
+revoke execute on function retirar_promessa(uuid, text) from public, anon, service_role;
+grant execute on function aceitar_candidata(uuid, text, uuid) to authenticated;
+grant execute on function descartar_candidata(uuid) to authenticated;
+grant execute on function reabrir_candidata(uuid) to authenticated;
+grant execute on function editar_promessa(uuid, text, uuid, text) to authenticated;
+grant execute on function publicar_promessa(uuid, text) to authenticated;
+grant execute on function retirar_promessa(uuid, text) to authenticated;
