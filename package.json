@@ -26,6 +26,7 @@
     "server-only": "^0.0.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.14",
     "@types/adm-zip": "^0.5.8",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
